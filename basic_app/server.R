@@ -1,140 +1,102 @@
-library(shiny)
-library(xml2)
-
-# HALO/ImageScope-style LineColor is a decimal-packed BGR integer.
-# Convert it to a standard #RRGGBB hex string for use in SVG.
-bgr_dec_to_hex <- function(dec) {
-  dec <- suppressWarnings(as.integer(dec))
-  if (is.na(dec)) return("#FF0000")
-  r <- bitwAnd(dec, 255)
-  g <- bitwAnd(bitwShiftR(dec, 8), 255)
-  b <- bitwAnd(bitwShiftR(dec, 16), 255)
-  sprintf("#%02X%02X%02X", r, g, b)
-}
-
-# Parse a HALO .annotations XML file into a list of polygons, each with
-# normalized "x,y x,y ..." viewport-coordinate point strings ready to hand
-# straight to the JS side as an SVG <polygon points="..."> attribute.
-#
-# `ref_width` is the width of whatever coordinate space the annotation's raw
-# X/Y vertices are recorded in — this is usually the FULL-RESOLUTION .svs
-# width, NOT the (possibly downsampled) DZI you're displaying. Getting this
-# value wrong is what causes an offset/scale mismatch in the overlay.
-parse_halo_annotations <- function(ann_url, ref_width, skip_hidden = TRUE,
-                                   offset_x = 0, offset_y = 0, scale_factor = 1) {
-  doc <- read_xml(ann_url)
-  xml_ns_strip(doc)
-  
-  annotation_nodes <- xml_find_all(doc, "//Annotation")
-  if (length(annotation_nodes) == 0) {
-    stop("No <Annotation> nodes found — the file's XML schema may differ from what was assumed.")
-  }
-  
-  polygons <- list()
-  
-  for (ann in annotation_nodes) {
-    ann_name  <- xml_attr(ann, "Name")
-    visible   <- xml_attr(ann, "Visible")
-    color_hex <- bgr_dec_to_hex(xml_attr(ann, "LineColor"))
-    
-    if (skip_hidden && !is.na(visible) && identical(tolower(visible), "false")) next
-    
-    regions <- xml_find_all(ann, ".//Region")
-    for (reg in regions) {
-      verts <- xml_find_all(reg, ".//V")  # HALO uses <V X=".." Y="..">, not <Vertex>
-      if (length(verts) < 3) next         # need at least a triangle to draw a polygon
-      
-      raw_x <- as.numeric(xml_attr(verts, "X"))
-      raw_y <- as.numeric(xml_attr(verts, "Y"))
-      
-      adj_x <- raw_x * scale_factor + offset_x
-      adj_y <- raw_y * scale_factor + offset_y
-      
-      xs <- adj_x / ref_width
-      ys <- adj_y / ref_width  # yes, width — OSD viewport convention
-      
-      points_str <- paste(sprintf("%f,%f", xs, ys), collapse = " ")
-      
-      polygons[[length(polygons) + 1]] <- list(
-        name   = ann_name,
-        color  = color_hex,
-        points = points_str
-      )
-    }
-  }
-  
-  polygons
-}
-
-
 function(input, output, session) {
   
-  # --- Auto-fill URLs and reference width when a stain is picked ---
-  observeEvent(input$stain_select, {
-    m <- donor_manifest[[input$stain_select]]
-    req(m)
-    
-    updateTextInput(session, "dzi_url", value = m$primary_dzi)
-    updateTextInput(session, "overlay_url", value = if (is.null(m$analysis_dzi)) "" else m$analysis_dzi)
-    updateNumericInput(session, "annotation_ref_width", value = m$raw_svs_width)
+  output$metadata_table <- renderTable({ donor_metadata })
+  
+  # --- Donor picked (mode = "donor") -> populate that donor's stain choices ---
+  observeEvent(input$cmp_donor, {
+    stains <- get_stain_choices_for_donor(input$cmp_donor)
+    updateSelectInput(session, "cmp_stains", choices = stains)
   }, ignoreNULL = TRUE)
   
-  
-  observeEvent(input$load_btn, {
-    req(input$dzi_url)
+  # --- Assemble the set of {donor, stain, slot} entries for the current selection ---
+  image_entries <- eventReactive(input$load_btn, {
     
-    session$sendCustomMessage("loadDZI", list(url = input$dzi_url))
-    
-    if (nzchar(input$overlay_url)) {
-      session$sendCustomMessage(
-        "loadOverlay",
-        list(url = input$overlay_url, opacity = input$overlay_opacity)
-      )
-    }
-    
-    if (nzchar(input$annotations_url)) {
-      req(input$annotation_ref_width)
+    if (input$mode == "donor") {
+      req(input$cmp_donor, length(input$cmp_stains) > 0)
+      entries <- lapply(input$cmp_stains, function(stain) {
+        slot <- get_stain_slot(input$cmp_donor, stain)
+        if (is.null(slot)) return(NULL)
+        list(donor = input$cmp_donor, stain = stain, slot = slot)
+      })
       
-      polys <- tryCatch(
-        parse_halo_annotations(
-          input$annotations_url, input$annotation_ref_width,
-          offset_x = input$offset_x, offset_y = input$offset_y,
-          scale_factor = input$scale_factor
-        ),
-        error = function(e) {
-          showNotification(paste("Could not parse annotations file:", e$message), type = "warning")
-          list()
-        }
+    } else {
+      req(input$cmp_stain)
+      
+      donors <- switch(input$donor_subset_mode,
+                       "all"      = DONOR_CHOICES,
+                       "manual"   = input$cmp_donors_manual,
+                       "metadata" = filter_donors_by_metadata(
+                         donor_metadata,
+                         age_range = input$meta_age_range,
+                         cerad_min = input$meta_cerad_min,
+                         thal_min  = input$meta_thal_min,
+                         braak_min = input$meta_braak_min
+                       )
       )
-      session$sendCustomMessage("drawAnnotations", list(polygons = polys))
+      
+      entries <- lapply(donors, function(donor) {
+        slot <- get_stain_slot(donor, input$cmp_stain)
+        if (is.null(slot)) return(NULL)
+        list(donor = donor, stain = input$cmp_stain, slot = slot)
+      })
     }
+    
+    Filter(Negate(is.null), entries)
   })
   
-  # Re-parse and redraw the annotation overlay only — doesn't touch the
-  # image or overlay DZI, so this is fast for iteratively calibrating.
-  observeEvent(input$recalc_btn, {
-    req(input$annotations_url, nzchar(input$annotations_url), input$annotation_ref_width)
+  # --- Render one viewer div + annotation checkbox per selected image ---
+  output$viewer_grid <- renderUI({
+    entries <- image_entries()
+    if (length(entries) == 0) {
+      return(helpText("No images match this selection. Adjust filters and click Load / Compare."))
+    }
     
-    polys <- tryCatch(
-      parse_halo_annotations(
-        input$annotations_url, input$annotation_ref_width,
-        offset_x = input$offset_x, offset_y = input$offset_y,
-        scale_factor = input$scale_factor
-      ),
-      error = function(e) {
-        showNotification(paste("Could not parse annotations file:", e$message), type = "warning")
+    tagList(fluidRow(lapply(entries, function(e) {
+      cid <- paste0("osd-", safe_id(e$donor, e$stain))
+      column(
+        width = 6,
+        h5(paste(e$donor, "\u2014", e$stain)),
+        tags$div(
+          id = cid,
+          style = "width:100%; height:400px; background:#000; border:1px solid #ccc; position:relative; margin-bottom:6px;"
+        ),
+        tags$label(
+          tags$input(
+            type = "checkbox", checked = "checked",
+            onclick = sprintf("toggleAnnotationsFor('%s', this.checked)", cid)
+          ),
+          " Show annotations"
+        ),
+        tags$hr()
+      )
+    })))
+  })
+  
+  # --- Once the grid above has actually rendered, load each viewer's image ---
+  observeEvent(input$load_btn, {
+    entries <- image_entries()
+    req(length(entries) > 0)
+    
+    images <- lapply(entries, function(e) {
+      polys <- if (length(e$slot$annotation_files) > 0 && !is.na(e$slot$svs_width)) {
+        parse_multiple_annotations(e$slot$annotation_files, e$slot$svs_width)
+      } else {
         list()
       }
-    )
-    session$sendCustomMessage("drawAnnotations", list(polygons = polys))
+      
+      list(
+        id             = safe_id(e$donor, e$stain),
+        dziUrl         = e$slot$primary_dzi,
+        overlayUrl     = e$slot$annotation_dzi %||% "",
+        overlayOpacity = input$overlay_opacity,
+        polygons       = polys
+      )
+    })
+    
+    # Defer sending until after the reactive flush (which includes the UI
+    # update above) so the target <div>s already exist in the DOM.
+    session$onFlushed(function() {
+      session$sendCustomMessage("loadImages", list(images = images))
+    }, once = TRUE)
   })
-  
-  observeEvent(input$show_annotations, {
-    session$sendCustomMessage("toggleAnnotations", list(visible = input$show_annotations))
-  })
-  
-  observeEvent(input$overlay_opacity, {
-    req(nzchar(input$overlay_url))
-    session$sendCustomMessage("setOverlayOpacity", list(opacity = input$overlay_opacity))
-  }, ignoreInit = TRUE)
 }

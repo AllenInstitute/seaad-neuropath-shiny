@@ -1,50 +1,36 @@
-# --- Donor file manifest ---
-# Hardcoded from the JSON manifest for donor H19.33.004. Converts s3:// URIs
-# to public https:// URLs (adjust the bucket-to-domain mapping below if this
-# bucket isn't served the same way as the sea-ad-quantitative-neuropathology one).
+library(jsonlite)
+library(xml2)
 
-s3_to_https <- function(s3_uri) {
-  parts <- sub("^s3://", "", s3_uri)
-  bucket <- sub("/.*$", "", parts)
-  key <- sub("^[^/]+/", "", parts)
-  paste0("https://", bucket, ".s3.amazonaws.com/", key)
-}
+source("R/functions.R")
 
-# One entry per stain: primary (base) DZI, analysis DZI (proper pre-built .dzi,
-# same resolution as annotation.svg so it overlays with NO scale correction
-# needed), and the raw .svs width/height (the coordinate space whole-slide
-# .annotations vertex files are recorded in).
-donor_manifest <- list(
-  "a-Syn" = list(
-    primary_dzi  = s3_to_https("s3://staging-sea-ad-neuropath/middle-temporal-gyrus-and-superior-temporal-gyrus/H19.33.004/H19.33.004-A6-a-Syn-primary/H19.33.004-A6-ASYN-primary.dzi"),
-    analysis_dzi = s3_to_https("s3://staging-sea-ad-neuropath/middle-temporal-gyrus-and-superior-temporal-gyrus/H19.33.004/H19.33.004-A6-a-Syn-analysis/H19.33.004-A6-a-Syn_analysis.dzi"),
-    raw_svs_width = 51792, raw_svs_height = 41405
-  ),
-  "AT" = list(
-    primary_dzi  = s3_to_https("s3://staging-sea-ad-neuropath/middle-temporal-gyrus-and-superior-temporal-gyrus/H19.33.004/H19.33.004-A6-AT-primary/H19.33.004-A6-AT-primary.dzi"),
-    analysis_dzi = s3_to_https("s3://staging-sea-ad-neuropath/middle-temporal-gyrus-and-superior-temporal-gyrus/H19.33.004/H19.33.004-A6-AT-analysis/H19.33.004-A6-AT_analysis.dzi"),
-    raw_svs_width = 55775, raw_svs_height = 45245
-  ),
-  "GFAP" = list(
-    primary_dzi  = s3_to_https("s3://staging-sea-ad-neuropath/middle-temporal-gyrus-and-superior-temporal-gyrus/H19.33.004/H19.33.004-A6-GFAP-primary/H19.33.004-A6-GFAP-primary.dzi"),
-    analysis_dzi = s3_to_https("s3://staging-sea-ad-neuropath/middle-temporal-gyrus-and-superior-temporal-gyrus/H19.33.004/H19.33.004-A6-GFAP-analysis/H19.33.004-A6-GFAP_analysis.dzi"),
-    raw_svs_width = 51792, raw_svs_height = 41485
-  ),
-  "I6" = list(
-    primary_dzi  = s3_to_https("s3://staging-sea-ad-neuropath/middle-temporal-gyrus-and-superior-temporal-gyrus/H19.33.004/H19.33.004-A6-I6-primary/H19.33.004-A6-I6-primary.dzi"),
-    analysis_dzi = s3_to_https("s3://staging-sea-ad-neuropath/middle-temporal-gyrus-and-superior-temporal-gyrus/H19.33.004/H19.33.004-A6-I6-analysis/H19.33.004-A6-I6_analysis.dzi"),
-    raw_svs_width = 51792, raw_svs_height = 42131
-  ),
-  "NeuN" = list(
-    primary_dzi  = s3_to_https("s3://staging-sea-ad-neuropath/middle-temporal-gyrus-and-superior-temporal-gyrus/H19.33.004/H19.33.004-A06-NeuN-primary/H19.33.004-A06-NEUN-primary.dzi"),
-    analysis_dzi = s3_to_https("s3://staging-sea-ad-neuropath/middle-temporal-gyrus-and-superior-temporal-gyrus/H19.33.004/H19.33.004-A06-NeuN-analysis/H19.33.004-A06-NeuN_analysis.dzi"),
-    raw_svs_width = 51792, raw_svs_height = 42046
-  ),
-  "LFB" = list(
-    primary_dzi  = s3_to_https("s3://staging-sea-ad-neuropath/middle-temporal-gyrus-and-superior-temporal-gyrus/H19.33.004/H19.33.004-A6-LFB-primary/H19.33.004-A6-LFB-primary.dzi"),
-    analysis_dzi = NULL,  # no analysis/annotation files exist for this stain
-    raw_svs_width = 53783, raw_svs_height = 41201
-  )
+# ---------------------------------------------------------------------------
+# List of JSON manifest sources — one entry per donor+region. Each can be a
+# local file path (e.g. from a downloaded/mounted folder) or an https URL.
+# Fill this in with your real manifest files across all donors/regions.
+# ---------------------------------------------------------------------------
+manifest_json_paths <- c(
+  "https://sea-ad-quantitative-neuropathology.s3.amazonaws.com/middle-temporal-gyrus-and-superior-temporal-gyrus/H19.33.004/H19.33.004.json",
+  "https://sea-ad-quantitative-neuropathology.s3.amazonaws.com/middle-temporal-gyrus-and-superior-temporal-gyrus/H20.33.001/H20.33.001.json",
+  "https://sea-ad-quantitative-neuropathology.s3.amazonaws.com/middle-temporal-gyrus-and-superior-temporal-gyrus/H20.33.002/H20.33.002.json"
+  # "path/to/H19.33.004_middle-temporal-gyrus-and-superior-temporal-gyrus.json",
+  # "https://.../another_donor_another_region.json",
 )
 
-STAIN_CHOICES <- names(donor_manifest)
+donor_manifest <- build_donor_manifest(manifest_json_paths)
+DONOR_CHOICES  <- names(donor_manifest)
+ALL_STAINS     <- get_all_stains()
+
+# ---------------------------------------------------------------------------
+# Donor metadata — DUMMY DATA for now. Replace generate_dummy_metadata() with
+# a real query (database, CSV, API, etc.) once that source is available.
+# ---------------------------------------------------------------------------
+donor_metadata <- generate_dummy_metadata(DONOR_CHOICES)
+
+# Attach metadata onto each donor's manifest entry too, so it travels with
+# the rest of that donor's data if needed elsewhere.
+for (d in DONOR_CHOICES) {
+  donor_manifest[[d]]$metadata <- as.list(donor_metadata[donor_metadata$donor == d, ])
+}
+
+# Fallback bounds for the age filter slider when there's no metadata yet.
+AGE_RANGE_DEFAULT <- if (nrow(donor_metadata) > 0) range(donor_metadata$age) else c(50, 100)
