@@ -3,6 +3,7 @@ library(xml2)
 
 source("R/functions.R")
 
+
 # ---------------------------------------------------------------------------
 # List of JSON manifest sources — one entry per donor+region. Each can be a
 # local file path (e.g. from a downloaded/mounted folder) or an https URL.
@@ -21,16 +22,18 @@ DONOR_CHOICES  <- names(donor_manifest)
 ALL_STAINS     <- get_all_stains()
 
 # ---------------------------------------------------------------------------
-# Donor metadata — DUMMY DATA for now. Replace generate_dummy_metadata() with
-# a real query (database, CSV, API, etc.) once that source is available.
+# Donor metadata. If a real specimen CSV is available, point this at it and
+# METADATA_FIELDS' bounds/choices will be derived from the actual data
+# (min/max for range fields, distinct values for select fields) rather than
+# the placeholder values hardcoded in functions.R. Leave blank to fall back
+# to dummy data.
 # ---------------------------------------------------------------------------
-donor_metadata <- generate_dummy_metadata(DONOR_CHOICES)
+specimen_metadata_csv_path <- "ins/SpecimenMetadata.csv"  # e.g. "path/to/specimen_metadata.csv"
 
-# Attach metadata onto each donor's manifest entry too, so it travels with
-# the rest of that donor's data if needed elsewhere.
-for (d in DONOR_CHOICES) {
-  donor_manifest[[d]]$metadata <- as.list(donor_metadata[donor_metadata$donor == d, ])
+donor_metadata <- if (nzchar(specimen_metadata_csv_path)) {
+  load_specimen_metadata_csv(specimen_metadata_csv_path)
+} else {
+  generate_dummy_metadata(DONOR_CHOICES)
 }
 
-# Fallback bounds for the age filter slider when there's no metadata yet.
-AGE_RANGE_DEFAULT <- if (nrow(donor_metadata) > 0) range(donor_metadata$age) else c(50, 100)
+METADATA_FIELDS <- derive_metadata_fields(METADATA_FIELDS, donor_metadata)

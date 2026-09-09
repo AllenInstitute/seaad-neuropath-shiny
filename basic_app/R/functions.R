@@ -92,9 +92,25 @@ build_donor_manifest <- function(manifest_sources) {
   manifest
 }
 
-# A donor's stains flattened across all of that donor's regions (the viewer
-# doesn't expose a region picker). If the same stain name exists in more than
-# one region for a donor, the first region encountered wins.
+# --- Region / stain lookup helpers -----------------------------------------
+
+get_regions_for_donor <- function(donor) {
+  regions <- donor_manifest[[donor]]
+  if (is.null(regions)) return(character(0))
+  names(regions)
+}
+
+# Stains available for one specific donor+region pair (exact, no flattening).
+get_stain_choices_for_donor_region <- function(donor, region) {
+  slot <- donor_manifest[[donor]][[region]]
+  if (is.null(slot)) return(character(0))
+  names(slot)
+}
+
+# A donor's stains flattened across ALL of that donor's regions — used only
+# by the "compare one stain across donors" mode, which doesn't ask for a
+# region. If the same stain name exists in more than one region for a donor,
+# the first region encountered wins.
 get_stain_choices_for_donor <- function(donor) {
   regions <- donor_manifest[[donor]]
   if (is.null(regions)) return(character(0))
@@ -116,13 +132,18 @@ get_all_stains <- function() {
   unique(unlist(lapply(names(donor_manifest), get_stain_choices_for_donor), use.names = FALSE))
 }
 
-# Sanitized identifier safe for use as an HTML element id / JS key.
-safe_id <- function(donor, stain) {
-  gsub("[^A-Za-z0-9]+", "_", paste(donor, stain, sep = "_"))
+# Sanitized identifier safe for use as an HTML element id / JS key. `region`
+# is optional — needed when comparing the same donor+stain across multiple
+# regions, where donor+stain alone would collide.
+safe_id <- function(donor, stain, region = NULL) {
+  parts <- c(donor, region, stain)
+  parts <- parts[!is.na(parts) & nzchar(parts)]
+  gsub("[^A-Za-z0-9]+", "_", paste(parts, collapse = "_"))
 }
 
 # ---------------------------------------------------------------------------
-# HALO annotation XML parsing
+# HALO annotation XML parsing (lazy + cached — see server.R's handling of
+# input$request_annotations for where this actually gets called)
 # ---------------------------------------------------------------------------
 
 # HALO/ImageScope-style LineColor is a decimal-packed BGR integer.
@@ -175,54 +196,187 @@ parse_halo_annotations <- function(ann_url, ref_width, skip_hidden = TRUE) {
   polygons
 }
 
-# Parse MULTIPLE annotation files (e.g. one per subregion/layer) and combine
-# into a single polygon list. A failure on one file doesn't block the others.
-parse_multiple_annotations <- function(urls, ref_width) {
-  all_polys <- list()
-  for (url in urls) {
-    polys <- tryCatch(
-      parse_halo_annotations(url, ref_width),
-      error = function(e) {
-        warning(paste("Could not parse", basename(url), "-", e$message))
-        list()
-      }
-    )
-    all_polys <- c(all_polys, polys)
+# Derive a short, human-readable label from an annotation file's name, e.g.
+# ".../H19.33.004-A06-NeuN_Layer5-6_analysis.annotations" -> "Layer5-6"
+# ".../H19.33.004-A06-NeuN_STG_analysis.annotations" -> "STG"
+# Falls back to the filename (minus extension) if the pattern doesn't match.
+annotation_label_from_url <- function(url) {
+  fname <- basename(url)
+  label <- sub("^.*_([^_]+)_analysis\\..*$", "\\1", fname, ignore.case = TRUE)
+  if (identical(label, fname)) {
+    label <- sub("\\.[^.]+$", "", fname)
   }
-  all_polys
+  label
+}
+
+# In-memory cache so repeatedly toggling the same annotation on/off — or
+# loading the same file across multiple comparisons in one session — only
+# ever parses it once.
+.annotation_cache <- new.env(parent = emptyenv())
+
+parse_halo_annotations_cached <- function(url, ref_width) {
+  key <- paste(url, ref_width, sep = "::")
+  if (exists(key, envir = .annotation_cache, inherits = FALSE)) {
+    return(get(key, envir = .annotation_cache, inherits = FALSE))
+  }
+  result <- tryCatch(
+    parse_halo_annotations(url, ref_width),
+    error = function(e) {
+      warning(paste("Could not parse", basename(url), "-", e$message))
+      list()
+    }
+  )
+  assign(key, result, envir = .annotation_cache)
+  result
 }
 
 # ---------------------------------------------------------------------------
-# Donor metadata (dummy data for now)
+# Donor metadata — spec-driven so adding/removing a field only means editing
+# METADATA_FIELDS, not touching the UI/generation/filtering code separately.
+# type "range"  -> rendered as a slider, filtered as an inclusive [min,max].
+# type "select" -> rendered as a multi-select, filtered as %in% (no
+#                  selection = no filter applied for that field).
 # ---------------------------------------------------------------------------
+
+METADATA_FIELDS <- list(
+  list(id = "age_at_death",    label = "Age at death",      type = "range",  min = 65, max = 102),
+  list(id = "sex",              label = "Sex",               type = "select", choices = c("Female", "Male")),
+  list(id = "apoe_genotype",    label = "APOE genotype",     type = "select",
+       choices = c("2/2", "2/3", "2/4", "3/3", "3/4", "4/4")),
+  list(id = "cog_status",       label = "Cognitive status",  type = "select",
+       choices = c("Dementia", "No dementia")),
+  list(id = "adnc",             label = "ADNC",               type = "select",
+       choices = c("Not AD", "Low", "Intermediate", "High")),
+  list(id = "thal_phase",       label = "Thal phase",         type = "select", choices = as.character(0:5)),
+  list(id = "braak_stage",      label = "Braak stage",        type = "select",
+       choices = c("0", "I", "II", "III", "IV", "V", "VI")),
+  list(id = "cerad_score",      label = "CERAD score",        type = "select",
+       choices = c("Absent", "Sparse", "Moderate", "Frequent")),
+  list(id = "lbd_path",         label = "LBD pathology",      type = "select",
+       choices = c("None", "Olfactory Bulb Only", "Amygdala-Predominant",
+                   "Brainstem-Predominant", "Limbic", "Neocortical", "Not Assessed")),
+  list(id = "years_education", label = "Years of education", type = "range",  min = 12, max = 21),
+  list(id = "cps",              label = "Continuous Pseudo-progression Score (CPS)",
+       type = "range", min = 0, max = 1)
+)
+
+# ---------------------------------------------------------------------------
+# Loading real specimen metadata from a CSV (see global.R for where this is
+# actually invoked). Column names are mapped by exact match against the
+# headers you provided; anything not listed here is dropped.
+# ---------------------------------------------------------------------------
+
+SPECIMEN_CSV_COLUMN_MAP <- c(
+  "Donor ID"                              = "donor",
+  "Age at death (years)"                  = "age_at_death",
+  "Sex"                                    = "sex",
+  "APOE genotype"                         = "apoe_genotype",
+  "Cognitive status"                      = "cog_status",
+  "ADNC"                                   = "adnc",
+  "Thal phase"                             = "thal_phase",
+  "Braak stage"                            = "braak_stage",
+  "CERAD score"                            = "cerad_score",
+  "Years of education (years)"            = "years_education",
+  "Continuous Pseudo-progression Score"   = "cps"
+)
+
+# Excel silently reinterprets genotype strings like "3/3" as dates and
+# re-serializes them as e.g. "3-Mar" (day-month abbreviation). Since a US
+# locale reads "M/D" as month/day, the original fraction is recoverable:
+# "3-Mar" -> month=Mar(3), day=3 -> "3/3". "4-Mar" -> month=3, day=4 -> "3/4".
+# "3-Feb" -> month=2, day=3 -> "2/3". "4-Apr" -> month=4, day=4 -> "4/4".
+# Alleles are sorted ascending for a canonical "lower/higher" display.
+decode_apoe_genotype <- function(x) {
+  vapply(x, function(v) {
+    if (is.na(v)) return(NA_character_)
+    if (grepl("^[0-9]/[0-9]$", v)) return(v)  # already in the correct format
+    m <- regmatches(v, regexec("^([0-9]+)-([A-Za-z]{3})$", v))[[1]]
+    if (length(m) != 3) return(v)  # unrecognized format — leave untouched
+    day   <- as.integer(m[2])
+    month <- match(tolower(m[3]), tolower(month.abb))
+    if (is.na(month)) return(v)
+    paste(sort(c(month, day)), collapse = "/")
+  }, character(1), USE.NAMES = FALSE)
+}
+
+# Reads the specimen metadata CSV and renames/cleans columns into our
+# internal field ids. Strips "Thal "/"Braak " prefixes and decodes the
+# Excel-mangled APOE genotype strings.
+load_specimen_metadata_csv <- function(path) {
+  df <- read.csv(path, check.names = FALSE, stringsAsFactors = FALSE)
+  
+  missing_cols <- setdiff(names(SPECIMEN_CSV_COLUMN_MAP), names(df))
+  if (length(missing_cols) > 0) {
+    warning("Specimen CSV is missing expected columns: ", paste(missing_cols, collapse = ", "))
+  }
+  
+  keep <- intersect(names(SPECIMEN_CSV_COLUMN_MAP), names(df))
+  df <- df[, keep, drop = FALSE]
+  names(df) <- SPECIMEN_CSV_COLUMN_MAP[keep]
+  
+  if ("apoe_genotype" %in% names(df)) df$apoe_genotype <- decode_apoe_genotype(df$apoe_genotype)
+  if ("thal_phase" %in% names(df))    df$thal_phase   <- sub("^Thal\\s*", "", df$thal_phase, ignore.case = TRUE)
+  if ("braak_stage" %in% names(df))   df$braak_stage  <- sub("^Braak\\s*", "", df$braak_stage, ignore.case = TRUE)
+  
+  for (numeric_field in c("age_at_death", "years_education", "cps")) {
+    if (numeric_field %in% names(df)) {
+      df[[numeric_field]] <- suppressWarnings(as.numeric(df[[numeric_field]]))
+    }
+  }
+  
+  df
+}
+
+# Rebuilds each field's bounds/choices from REAL data instead of the
+# hardcoded placeholders above: range fields get min/max from the data,
+# select fields get their choices from the data's actual distinct values.
+# A field whose column isn't present in `data` keeps its placeholder as-is.
+derive_metadata_fields <- function(fields, data) {
+  lapply(fields, function(f) {
+    if (!(f$id %in% names(data))) return(f)
+    vals <- data[[f$id]]
+    if (f$type == "range") {
+      rng <- range(vals, na.rm = TRUE)
+      f$min <- floor(rng[1])
+      f$max <- ceiling(rng[2])
+    } else {
+      f$choices <- sort(unique(vals[!is.na(vals) & nzchar(as.character(vals))]))
+    }
+    f
+  })
+}
 
 generate_dummy_metadata <- function(donors, seed = 42) {
   if (length(donors) == 0) {
-    return(data.frame(
-      donor = character(0), age = numeric(0),
-      cerad_score = numeric(0), thal_score = numeric(0), braak_score = numeric(0),
-      stringsAsFactors = FALSE
-    ))
+    df <- data.frame(donor = character(0), stringsAsFactors = FALSE)
+    for (f in METADATA_FIELDS) df[[f$id]] <- if (f$type == "range") numeric(0) else character(0)
+    return(df)
   }
   set.seed(seed)
-  data.frame(
-    donor       = donors,
-    age         = sample(60:100, length(donors), replace = TRUE),
-    cerad_score = sample(0:3, length(donors), replace = TRUE),   # 0=none .. 3=frequent
-    thal_score  = sample(0:5, length(donors), replace = TRUE),   # Thal phase 0-5
-    braak_score = sample(0:6, length(donors), replace = TRUE),   # Braak stage 0-6
-    stringsAsFactors = FALSE
-  )
+  df <- data.frame(donor = donors, stringsAsFactors = FALSE)
+  for (f in METADATA_FIELDS) {
+    df[[f$id]] <- if (f$type == "range") {
+      sample(f$min:f$max, length(donors), replace = TRUE)
+    } else {
+      sample(f$choices, length(donors), replace = TRUE)
+    }
+  }
+  df
 }
 
-# Returns the vector of donor IDs matching all supplied thresholds.
-# Any argument left NULL is not applied as a filter.
-filter_donors_by_metadata <- function(metadata, age_range = NULL,
-                                      cerad_min = NULL, thal_min = NULL, braak_min = NULL) {
+# Reads all the meta_<id>_range / meta_<id>_sel Shiny inputs directly and
+# applies each as a filter; fields the user hasn't touched impose no
+# restriction. Returns the vector of matching donor IDs.
+filter_donors_by_metadata <- function(metadata, input) {
   df <- metadata
-  if (!is.null(age_range))  df <- df[df$age >= age_range[1] & df$age <= age_range[2], ]
-  if (!is.null(cerad_min))  df <- df[df$cerad_score >= cerad_min, ]
-  if (!is.null(thal_min))   df <- df[df$thal_score  >= thal_min, ]
-  if (!is.null(braak_min))  df <- df[df$braak_score >= braak_min, ]
+  for (f in METADATA_FIELDS) {
+    if (f$type == "range") {
+      val <- input[[paste0("meta_", f$id, "_range")]]
+      if (!is.null(val)) df <- df[df[[f$id]] >= val[1] & df[[f$id]] <= val[2], ]
+    } else {
+      val <- input[[paste0("meta_", f$id, "_sel")]]
+      if (!is.null(val) && length(val) > 0) df <- df[df[[f$id]] %in% val, ]
+    }
+  }
   df$donor
 }
