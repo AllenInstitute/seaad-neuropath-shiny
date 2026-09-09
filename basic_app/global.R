@@ -1,8 +1,10 @@
 library(jsonlite)
 library(xml2)
+library(dplyr)
+library(bslib)
+library(histoslider)
 
 source("R/functions.R")
-
 
 # ---------------------------------------------------------------------------
 # List of JSON manifest sources — one entry per donor+region. Each can be a
@@ -37,3 +39,8 @@ donor_metadata <- if (nzchar(specimen_metadata_csv_path)) {
 }
 
 METADATA_FIELDS <- derive_metadata_fields(METADATA_FIELDS, donor_metadata)
+
+# Shared theme object — passed to navbarPage(theme = ...) in ui.R. Using
+# bslib for theming (rather than shinythemes) keeps it consistent with the
+# bslib::accordion() components used for the metadata filters.
+APP_THEME <- bslib::bs_theme(bootswatch = "lux")

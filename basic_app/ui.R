@@ -1,104 +1,132 @@
 library(shiny)
+library(bslib)
 
-fluidPage(
+tagList(
   
   tags$head(
     tags$script(src = "https://cdn.jsdelivr.net/npm/openseadragon@4/build/openseadragon/openseadragon.min.js")
   ),
   
-  titlePanel("SEA-AD Neuropathology Slide Viewer"),
-  
-  sidebarLayout(
-    sidebarPanel(
-      width = 4,
-      
-      radioButtons(
-        "mode", "Comparison mode",
-        choices = c(
-          "Compare stains for one donor"      = "donor",
-          "Compare one stain across donors"   = "stain",
-          "Compare one stain across regions"  = "region"
-        )
-      ),
-      
-      conditionalPanel(
-        condition = "input.mode == 'donor'",
-        selectInput("cmp_donor", "Donor", choices = DONOR_CHOICES),
-        selectInput("cmp_region", "Region", choices = character(0)),
-        selectInput("cmp_stains", "Stains to compare", choices = character(0), multiple = TRUE)
-      ),
-      
-      conditionalPanel(
-        condition = "input.mode == 'stain'",
-        selectInput("cmp_stain", "Stain", choices = ALL_STAINS),
-        radioButtons(
-          "donor_subset_mode", "Donors",
-          choices = c(
-            "All donors"             = "all",
-            "Select specific donors" = "manual",
-            "Filter by metadata"     = "metadata"
-          )
-        ),
-        conditionalPanel(
-          condition = "input.donor_subset_mode == 'manual'",
-          selectInput("cmp_donors_manual", "Donors to compare", choices = DONOR_CHOICES, multiple = TRUE)
-        )
-      ),
-      
-      conditionalPanel(
-        condition = "input.mode == 'region'",
-        selectInput("cmp_stain_region", "Stain", choices = ALL_STAINS),
-        helpText("Shows every region available for each matching donor+stain combination."),
-        radioButtons(
-          "donor_subset_mode_region", "Donors",
-          choices = c(
-            "All donors"             = "all",
-            "Select specific donors" = "manual",
-            "Filter by metadata"     = "metadata"
-          )
-        ),
-        conditionalPanel(
-          condition = "input.donor_subset_mode_region == 'manual'",
-          selectInput("cmp_donors_manual_region", "Donors to compare", choices = DONOR_CHOICES, multiple = TRUE)
-        )
-      ),
-      
-      # Shared metadata-filter panel — used by BOTH stain-based modes
-      # (donor_subset_mode / donor_subset_mode_region), so it only needs to
-      # exist once. The meta_<id>_range / meta_<id>_sel inputs it contains are
-      # read directly by filter_donors_by_metadata() regardless of which mode
-      # triggered it.
-      conditionalPanel(
-        condition = "(input.mode == 'stain' && input.donor_subset_mode == 'metadata') ||
-                     (input.mode == 'region' && input.donor_subset_mode_region == 'metadata')",
-        tags$details(
-          tags$summary(strong("Metadata filters (click to expand)")),
-          br(),
-          tagList(lapply(METADATA_FIELDS, function(f) {
-            if (f$type == "range") {
-              sliderInput(paste0("meta_", f$id, "_range"), f$label,
-                          min = f$min, max = f$max, value = c(f$min, f$max))
-            } else {
-              selectInput(paste0("meta_", f$id, "_sel"), f$label,
-                          choices = f$choices, multiple = TRUE)
-            }
-          })),
-          tags$hr(),
-          strong("All donor metadata"),
-          tableOutput("metadata_table")
-        )
-      ),
-      
-      tags$hr(),
-      sliderInput("overlay_opacity", "Overlay opacity", min = 0, max = 1, value = 0.5, step = 0.05),
-      actionButton("load_btn", "Load / Compare", class = "btn-primary")
+  navbarPage(
+    title = "SEA-AD Neuropathology Viewer",
+    theme = APP_THEME,
+    
+    # =========================================================================
+    # HOME — single donor/region/stain, not a comparison. Mask overlay is
+    # explicitly toggleable rather than always shown.
+    # =========================================================================
+    tabPanel("Home",
+             sidebarLayout(
+               sidebarPanel(
+                 width = 4,
+                 selectInput("home_donor", "Donor", choices = DONOR_CHOICES),
+                 selectInput("home_region", "Region", choices = character(0)),
+                 selectInput("home_stain", "Stain", choices = character(0)),
+                 tags$hr(),
+                 checkboxInput("home_show_mask", "Show mask/analysis overlay", value = TRUE),
+                 conditionalPanel(
+                   condition = "input.home_show_mask",
+                   sliderInput("home_overlay_opacity", "Overlay opacity", min = 0, max = 1, value = 0.5, step = 0.05)
+                 ),
+                 actionButton("home_load_btn", "Load", class = "btn-primary")
+               ),
+               mainPanel(
+                 width = 8,
+                 uiOutput("home_annotation_ui"),
+                 tags$hr(),
+                 uiOutput("home_viewer_grid")
+               )
+             )
     ),
     
-    mainPanel(
-      width = 8,
-      uiOutput("annotation_master_ui"),
-      tags$hr(),
-      uiOutput("viewer_grid")
+    # =========================================================================
+    # COMPARE STAINS FOR ONE DONOR (scoped to one region of that donor)
+    # =========================================================================
+    tabPanel("Compare Stains (Donor)",
+             sidebarLayout(
+               sidebarPanel(
+                 width = 4,
+                 selectInput("dstain_donor", "Donor", choices = DONOR_CHOICES),
+                 selectInput("dstain_region", "Region", choices = character(0)),
+                 selectInput("dstain_stains", "Stains to compare", choices = character(0), multiple = TRUE),
+                 tags$hr(),
+                 sliderInput("dstain_overlay_opacity", "Overlay opacity", min = 0, max = 1, value = 0.5, step = 0.05),
+                 actionButton("dstain_load_btn", "Load / Compare", class = "btn-primary")
+               ),
+               mainPanel(
+                 width = 8,
+                 uiOutput("dstain_annotation_ui"),
+                 tags$hr(),
+                 uiOutput("dstain_viewer_grid")
+               )
+             )
+    ),
+    
+    # =========================================================================
+    # COMPARE ONE STAIN ACROSS DONORS
+    # =========================================================================
+    tabPanel("Compare Donors (Stain)",
+             sidebarLayout(
+               sidebarPanel(
+                 width = 4,
+                 selectInput("sdonor_stain", "Stain", choices = ALL_STAINS),
+                 radioButtons(
+                   "sdonor_subset_mode", "Donors",
+                   choices = c("All donors" = "all", "Select specific donors" = "manual", "Filter by metadata" = "metadata")
+                 ),
+                 conditionalPanel(
+                   condition = "input.sdonor_subset_mode == 'manual'",
+                   selectInput("sdonor_donors_manual", "Donors to compare", choices = DONOR_CHOICES, multiple = TRUE)
+                 ),
+                 conditionalPanel(
+                   condition = "input.sdonor_subset_mode == 'metadata'",
+                   build_metadata_accordion("sdonor", donor_metadata)
+                 ),
+                 tags$hr(),
+                 sliderInput("sdonor_overlay_opacity", "Overlay opacity", min = 0, max = 1, value = 0.5, step = 0.05),
+                 actionButton("sdonor_load_btn", "Load / Compare", class = "btn-primary")
+               ),
+               mainPanel(
+                 width = 8,
+                 uiOutput("sdonor_annotation_ui"),
+                 tags$hr(),
+                 uiOutput("sdonor_viewer_grid")
+               )
+             )
+    ),
+    
+    # =========================================================================
+    # COMPARE ONE STAIN ACROSS REGIONS
+    # =========================================================================
+    tabPanel("Compare Regions (Stain)",
+             sidebarLayout(
+               sidebarPanel(
+                 width = 4,
+                 selectInput("sregion_stain", "Stain", choices = ALL_STAINS),
+                 helpText("Shows every region available for each matching donor+stain combination."),
+                 radioButtons(
+                   "sregion_subset_mode", "Donors",
+                   choices = c("All donors" = "all", "Select specific donors" = "manual", "Filter by metadata" = "metadata")
+                 ),
+                 conditionalPanel(
+                   condition = "input.sregion_subset_mode == 'manual'",
+                   selectInput("sregion_donors_manual", "Donors to compare", choices = DONOR_CHOICES, multiple = TRUE)
+                 ),
+                 conditionalPanel(
+                   condition = "input.sregion_subset_mode == 'metadata'",
+                   build_metadata_accordion("sregion", donor_metadata)
+                 ),
+                 tags$hr(),
+                 sliderInput("sregion_overlay_opacity", "Overlay opacity", min = 0, max = 1, value = 0.5, step = 0.05),
+                 actionButton("sregion_load_btn", "Load / Compare", class = "btn-primary")
+               ),
+               mainPanel(
+                 width = 8,
+                 uiOutput("sregion_annotation_ui"),
+                 tags$hr(),
+                 uiOutput("sregion_viewer_grid")
+               )
+             )
     )
   ),
   
@@ -160,8 +188,9 @@ fluidPage(
     }
 
     // One master checkbox per unique annotation label toggles that label
-    // across EVERY currently loaded image that has a matching file. Any
-    // group not yet fetched gets requested from the server in one batch.
+    // across EVERY currently loaded image (on the SAME page) that has a
+    // matching file. Any group not yet fetched gets requested from the
+    // server in one batch.
     function toggleAnnotationLabel(label, visible) {
       var pending = [];
 

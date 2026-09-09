@@ -2,6 +2,8 @@
 # functions.R — pure helper functions used by global.R and server.R
 # =============================================================================
 
+library(dplyr)
+
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
 # ---------------------------------------------------------------------------
@@ -364,19 +366,148 @@ generate_dummy_metadata <- function(donors, seed = 42) {
   df
 }
 
-# Reads all the meta_<id>_range / meta_<id>_sel Shiny inputs directly and
-# applies each as a filter; fields the user hasn't touched impose no
-# restriction. Returns the vector of matching donor IDs.
-filter_donors_by_metadata <- function(metadata, input) {
+# Normalizes histoslider's selection value (its exact return shape isn't
+# fully documented — could be a list(start=,end=) or a plain length-2
+# vector) into a simple c(min, max).
+histoslider_range <- function(val) {
+  if (is.null(val)) return(NULL)
+  if (is.list(val) && !is.null(val$start) && !is.null(val$end)) return(c(val$start, val$end))
+  as.numeric(val)
+}
+
+# Reads the meta_* inputs for a given page (identified by `prefix`, since the
+# same metadata accordion is embedded on multiple pages with differently
+# prefixed widget ids to avoid id collisions across navbarPage tabs — all
+# tabs share one DOM) and filters donor_metadata down with dplyr. Returns the
+# vector of matching donor IDs.
+filter_donors_by_metadata <- function(metadata, input, prefix) {
   df <- metadata
   for (f in METADATA_FIELDS) {
     if (f$type == "range") {
-      val <- input[[paste0("meta_", f$id, "_range")]]
-      if (!is.null(val)) df <- df[df[[f$id]] >= val[1] & df[[f$id]] <= val[2], ]
+      val <- histoslider_range(input[[paste0(prefix, "_meta_", f$id, "_range")]])
+      if (!is.null(val)) {
+        df <- df %>% dplyr::filter(.data[[f$id]] >= val[1], .data[[f$id]] <= val[2])
+      }
     } else {
-      val <- input[[paste0("meta_", f$id, "_sel")]]
-      if (!is.null(val) && length(val) > 0) df <- df[df[[f$id]] %in% val, ]
+      val <- input[[paste0(prefix, "_meta_", f$id, "_sel")]]
+      if (!is.null(val) && length(val) > 0) {
+        df <- df %>% dplyr::filter(.data[[f$id]] %in% val)
+      }
     }
   }
   df$donor
+}
+
+# One bslib accordion_panel per metadata field: numeric fields get a
+# histoslider (histogram + range filter combined in one widget); categorical
+# fields get a multi-select plus a separate bar-chart histogram (registered
+# server-side via register_metadata_histograms()). Widget ids are prefixed
+# per page to stay unique across navbarPage tabs.
+build_metadata_accordion <- function(prefix, data) {
+  panels <- lapply(METADATA_FIELDS, function(f) {
+    body <- if (f$type == "range") {
+      histoslider::input_histoslider(paste0(prefix, "_meta_", f$id, "_range"), NULL, data[[f$id]])
+    } else {
+      shiny::tagList(
+        shiny::selectInput(paste0(prefix, "_meta_", f$id, "_sel"), NULL, choices = f$choices, multiple = TRUE),
+        shiny::plotOutput(paste0(prefix, "_hist_", f$id), height = "150px")
+      )
+    }
+    bslib::accordion_panel(title = f$label, body)
+  })
+  do.call(bslib::accordion, c(list(id = paste0(prefix, "_metadata_accordion"), open = FALSE), panels))
+}
+
+# Registers the renderPlot output for every categorical field's bar chart
+# under a page's prefix. Call once per page (outside any observer) that
+# includes a metadata accordion. These show the OVERALL distribution across
+# all donors, not a live-filtered one.
+register_metadata_histograms <- function(output, prefix, data) {
+  for (f in METADATA_FIELDS) {
+    if (f$type != "select") next
+    local({
+      fld <- f
+      output[[paste0(prefix, "_hist_", fld$id)]] <- shiny::renderPlot({
+        counts <- table(data[[fld$id]])
+        barplot(counts, main = fld$label, col = "#7952b3", border = NA, las = 2, cex.names = 0.8)
+      })
+    })
+  }
+}
+
+# ---------------------------------------------------------------------------
+# Shared multi-image rendering/payload builders — used by every comparison
+# page (and the single-image Home page, which just passes a length-1 list).
+# ---------------------------------------------------------------------------
+
+render_viewer_grid_ui <- function(entries) {
+  if (length(entries) == 0) {
+    return(shiny::helpText("No images match this selection."))
+  }
+  col_width <- if (length(entries) == 1) 12 else 6
+  shiny::tagList(shiny::fluidRow(lapply(entries, function(e) {
+    cid   <- paste0("osd-", safe_id(e$donor, e$stain, e$region))
+    label <- if (!is.null(e$region)) paste(e$donor, "\u2014", e$region, "\u2014", e$stain)
+    else paste(e$donor, "\u2014", e$stain)
+    shiny::column(
+      width = col_width,
+      shiny::h5(label),
+      shiny::tags$div(
+        id = cid,
+        style = "width:100%; height:450px; background:#000; border:1px solid #ccc; position:relative; margin-bottom:6px;"
+      ),
+      shiny::tags$hr()
+    )
+  })))
+}
+
+render_annotation_master_ui <- function(entries) {
+  if (length(entries) == 0) return(NULL)
+  
+  all_labels <- character(0)
+  for (e in entries) {
+    if (length(e$slot$annotation_files) > 0) {
+      all_labels <- c(all_labels, vapply(e$slot$annotation_files, annotation_label_from_url, character(1)))
+    }
+  }
+  all_labels <- sort(unique(all_labels))
+  
+  if (length(all_labels) == 0) {
+    return(shiny::helpText("No annotation files available for the current selection."))
+  }
+  
+  shiny::tagList(
+    shiny::strong("Annotations:"),
+    shiny::div(
+      style = "display:flex; flex-wrap:wrap; gap:14px; margin-top:6px;",
+      lapply(all_labels, function(lab) {
+        shiny::tags$label(
+          shiny::tags$input(type = "checkbox", onclick = sprintf("toggleAnnotationLabel('%s', this.checked)", lab)),
+          paste0(" ", lab)
+        )
+      })
+    )
+  )
+}
+
+# Builds the JSON-ready payload for the 'loadImages' custom message. Does
+# NOT parse annotation XML (that stays lazy — see parse_halo_annotations_cached
+# and server.R's input$request_annotations handler).
+build_images_payload <- function(entries, overlay_opacity) {
+  lapply(entries, function(e) {
+    ann_files <- e$slot$annotation_files
+    if (length(ann_files) > 0) {
+      ann_files <- ann_files[order(vapply(ann_files, annotation_label_from_url, character(1)))]
+    }
+    groups <- lapply(ann_files, function(url) {
+      list(label = annotation_label_from_url(url), url = url, refWidth = e$slot$svs_width)
+    })
+    list(
+      id               = safe_id(e$donor, e$stain, e$region),
+      dziUrl           = e$slot$primary_dzi,
+      overlayUrl       = e$slot$annotation_dzi %||% "",
+      overlayOpacity   = overlay_opacity,
+      annotationGroups = groups
+    )
+  })
 }

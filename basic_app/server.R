@@ -1,161 +1,157 @@
 function(input, output, session) {
   
-  output$metadata_table <- renderTable({ donor_metadata })
+  # ===========================================================================
+  # HOME — single donor/region/stain, mask overlay explicitly toggleable
+  # ===========================================================================
   
-  # --- mode = "donor": donor -> region -> stains, each level scoped exactly ---
-  observeEvent(input$cmp_donor, {
-    updateSelectInput(session, "cmp_region", choices = get_regions_for_donor(input$cmp_donor))
+  observeEvent(input$home_donor, {
+    updateSelectInput(session, "home_region", choices = get_regions_for_donor(input$home_donor))
   }, ignoreNULL = TRUE)
   
-  observeEvent(list(input$cmp_donor, input$cmp_region), {
-    req(input$cmp_donor, input$cmp_region)
-    updateSelectInput(session, "cmp_stains",
-                      choices = get_stain_choices_for_donor_region(input$cmp_donor, input$cmp_region))
+  observeEvent(list(input$home_donor, input$home_region), {
+    req(input$home_donor, input$home_region)
+    updateSelectInput(session, "home_stain",
+                      choices = get_stain_choices_for_donor_region(input$home_donor, input$home_region))
   }, ignoreInit = TRUE)
   
-  # --- Assemble the set of {donor, stain, slot} entries for the current selection ---
-  image_entries <- eventReactive(input$load_btn, {
-    
-    if (input$mode == "donor") {
-      req(input$cmp_donor, input$cmp_region, length(input$cmp_stains) > 0)
-      entries <- lapply(input$cmp_stains, function(stain) {
-        slot <- donor_manifest[[input$cmp_donor]][[input$cmp_region]][[stain]]
-        if (is.null(slot)) return(NULL)
-        list(donor = input$cmp_donor, region = input$cmp_region, stain = stain, slot = slot)
-      })
-      
-    } else if (input$mode == "stain") {
-      req(input$cmp_stain)
-      
-      donors <- switch(input$donor_subset_mode,
-                       "all"      = DONOR_CHOICES,
-                       "manual"   = input$cmp_donors_manual,
-                       "metadata" = filter_donors_by_metadata(donor_metadata, input)
-      )
-      
-      entries <- lapply(donors, function(donor) {
-        slot <- get_stain_slot(donor, input$cmp_stain)
-        if (is.null(slot)) return(NULL)
-        list(donor = donor, region = NULL, stain = input$cmp_stain, slot = slot)
-      })
-      
-    } else { # mode == "region": every region available for each matching donor+stain
-      req(input$cmp_stain_region)
-      
-      donors <- switch(input$donor_subset_mode_region,
-                       "all"      = DONOR_CHOICES,
-                       "manual"   = input$cmp_donors_manual_region,
-                       "metadata" = filter_donors_by_metadata(donor_metadata, input)
-      )
-      
-      entries <- list()
-      for (donor in donors) {
-        for (region in get_regions_for_donor(donor)) {
-          slot <- donor_manifest[[donor]][[region]][[input$cmp_stain_region]]
-          if (!is.null(slot)) {
-            entries[[length(entries) + 1]] <- list(donor = donor, region = region,
-                                                   stain = input$cmp_stain_region, slot = slot)
-          }
-        }
-      }
-    }
-    
-    Filter(Negate(is.null), entries)
+  home_entries <- eventReactive(input$home_load_btn, {
+    req(input$home_donor, input$home_region, input$home_stain)
+    slot <- donor_manifest[[input$home_donor]][[input$home_region]][[input$home_stain]]
+    req(slot)
+    list(list(donor = input$home_donor, region = input$home_region, stain = input$home_stain, slot = slot))
   })
   
-  # --- One master, alphabetically-sorted, off-by-default checkbox list -------
-  # covering every unique annotation label across ALL currently loaded images.
-  output$annotation_master_ui <- renderUI({
-    entries <- image_entries()
-    if (length(entries) == 0) return(NULL)
-    
-    all_labels <- character(0)
-    for (e in entries) {
-      if (length(e$slot$annotation_files) > 0) {
-        all_labels <- c(all_labels, vapply(e$slot$annotation_files, annotation_label_from_url, character(1)))
-      }
-    }
-    all_labels <- sort(unique(all_labels))
-    
-    if (length(all_labels) == 0) {
-      return(helpText("No annotation files available for the current selection."))
-    }
-    
-    tagList(
-      strong("Annotations (applies to every loaded image with a matching file):"),
-      div(
-        style = "display:flex; flex-wrap:wrap; gap:14px; margin-top:6px;",
-        lapply(all_labels, function(lab) {
-          tags$label(
-            tags$input(type = "checkbox", onclick = sprintf("toggleAnnotationLabel('%s', this.checked)", lab)),
-            paste0(" ", lab)
-          )
-        })
-      )
-    )
-  })
+  output$home_annotation_ui <- renderUI({ render_annotation_master_ui(home_entries()) })
+  output$home_viewer_grid   <- renderUI({ render_viewer_grid_ui(home_entries()) })
   
-  # --- One viewer div per selected image (no per-image annotation controls
-  # anymore — the master checklist above handles all of them). ---
-  output$viewer_grid <- renderUI({
-    entries <- image_entries()
-    if (length(entries) == 0) {
-      return(helpText("No images match this selection. Adjust filters and click Load / Compare."))
-    }
-    
-    tagList(fluidRow(lapply(entries, function(e) {
-      cid <- paste0("osd-", safe_id(e$donor, e$stain, e$region))
-      label <- if (!is.null(e$region)) {
-        paste(e$donor, "\u2014", e$region, "\u2014", e$stain)
-      } else {
-        paste(e$donor, "\u2014", e$stain)
-      }
-      column(
-        width = 6,
-        h5(label),
-        tags$div(
-          id = cid,
-          style = "width:100%; height:400px; background:#000; border:1px solid #ccc; position:relative; margin-bottom:6px;"
-        ),
-        tags$hr()
-      )
-    })))
-  })
-  
-  # --- Load each image's base DZI + overlay DZI. Annotation XML is NOT
-  # parsed here — only label/url/refWidth are sent, kept lazy for speed. ---
-  observeEvent(input$load_btn, {
-    entries <- image_entries()
+  observeEvent(input$home_load_btn, {
+    entries <- home_entries()
     req(length(entries) > 0)
     
-    images <- lapply(entries, function(e) {
-      ann_files <- e$slot$annotation_files
-      if (length(ann_files) > 0) {
-        ann_files <- ann_files[order(vapply(ann_files, annotation_label_from_url, character(1)))]
-      }
-      
-      groups <- lapply(ann_files, function(url) {
-        list(label = annotation_label_from_url(url), url = url, refWidth = e$slot$svs_width)
-      })
-      
-      list(
-        id               = safe_id(e$donor, e$stain, e$region),
-        dziUrl           = e$slot$primary_dzi,
-        overlayUrl       = e$slot$annotation_dzi %||% "",
-        overlayOpacity   = input$overlay_opacity,
-        annotationGroups = groups
-      )
-    })
+    images <- build_images_payload(entries, input$home_overlay_opacity)
+    if (!isTRUE(input$home_show_mask)) images[[1]]$overlayUrl <- ""
     
-    # Defer sending until after the reactive flush (which includes the UI
-    # updates above) so the target <div>s already exist in the DOM.
     session$onFlushed(function() {
       session$sendCustomMessage("loadImages", list(images = images))
     }, once = TRUE)
   })
   
-  # --- Lazy annotation fetch: the client only asks for files it doesn't
-  # already have cached, batched into one request across all viewers. ---
+  # ===========================================================================
+  # COMPARE STAINS FOR ONE DONOR (scoped to one region)
+  # ===========================================================================
+  
+  observeEvent(input$dstain_donor, {
+    updateSelectInput(session, "dstain_region", choices = get_regions_for_donor(input$dstain_donor))
+  }, ignoreNULL = TRUE)
+  
+  observeEvent(list(input$dstain_donor, input$dstain_region), {
+    req(input$dstain_donor, input$dstain_region)
+    updateSelectInput(session, "dstain_stains",
+                      choices = get_stain_choices_for_donor_region(input$dstain_donor, input$dstain_region))
+  }, ignoreInit = TRUE)
+  
+  dstain_entries <- eventReactive(input$dstain_load_btn, {
+    req(input$dstain_donor, input$dstain_region, length(input$dstain_stains) > 0)
+    entries <- lapply(input$dstain_stains, function(stain) {
+      slot <- donor_manifest[[input$dstain_donor]][[input$dstain_region]][[stain]]
+      if (is.null(slot)) return(NULL)
+      list(donor = input$dstain_donor, region = input$dstain_region, stain = stain, slot = slot)
+    })
+    Filter(Negate(is.null), entries)
+  })
+  
+  output$dstain_annotation_ui <- renderUI({ render_annotation_master_ui(dstain_entries()) })
+  output$dstain_viewer_grid   <- renderUI({ render_viewer_grid_ui(dstain_entries()) })
+  
+  observeEvent(input$dstain_load_btn, {
+    entries <- dstain_entries()
+    req(length(entries) > 0)
+    images <- build_images_payload(entries, input$dstain_overlay_opacity)
+    session$onFlushed(function() {
+      session$sendCustomMessage("loadImages", list(images = images))
+    }, once = TRUE)
+  })
+  
+  # ===========================================================================
+  # COMPARE ONE STAIN ACROSS DONORS
+  # ===========================================================================
+  
+  register_metadata_histograms(output, "sdonor", donor_metadata)
+  
+  sdonor_entries <- eventReactive(input$sdonor_load_btn, {
+    req(input$sdonor_stain)
+    
+    donors <- switch(input$sdonor_subset_mode,
+                     "all"      = DONOR_CHOICES,
+                     "manual"   = input$sdonor_donors_manual,
+                     "metadata" = filter_donors_by_metadata(donor_metadata, input, "sdonor")
+    )
+    
+    entries <- lapply(donors, function(donor) {
+      slot <- get_stain_slot(donor, input$sdonor_stain)
+      if (is.null(slot)) return(NULL)
+      list(donor = donor, region = NULL, stain = input$sdonor_stain, slot = slot)
+    })
+    Filter(Negate(is.null), entries)
+  })
+  
+  output$sdonor_annotation_ui <- renderUI({ render_annotation_master_ui(sdonor_entries()) })
+  output$sdonor_viewer_grid   <- renderUI({ render_viewer_grid_ui(sdonor_entries()) })
+  
+  observeEvent(input$sdonor_load_btn, {
+    entries <- sdonor_entries()
+    req(length(entries) > 0)
+    images <- build_images_payload(entries, input$sdonor_overlay_opacity)
+    session$onFlushed(function() {
+      session$sendCustomMessage("loadImages", list(images = images))
+    }, once = TRUE)
+  })
+  
+  # ===========================================================================
+  # COMPARE ONE STAIN ACROSS REGIONS
+  # ===========================================================================
+  
+  register_metadata_histograms(output, "sregion", donor_metadata)
+  
+  sregion_entries <- eventReactive(input$sregion_load_btn, {
+    req(input$sregion_stain)
+    
+    donors <- switch(input$sregion_subset_mode,
+                     "all"      = DONOR_CHOICES,
+                     "manual"   = input$sregion_donors_manual,
+                     "metadata" = filter_donors_by_metadata(donor_metadata, input, "sregion")
+    )
+    
+    entries <- list()
+    for (donor in donors) {
+      for (region in get_regions_for_donor(donor)) {
+        slot <- donor_manifest[[donor]][[region]][[input$sregion_stain]]
+        if (!is.null(slot)) {
+          entries[[length(entries) + 1]] <- list(donor = donor, region = region,
+                                                 stain = input$sregion_stain, slot = slot)
+        }
+      }
+    }
+    entries
+  })
+  
+  output$sregion_annotation_ui <- renderUI({ render_annotation_master_ui(sregion_entries()) })
+  output$sregion_viewer_grid   <- renderUI({ render_viewer_grid_ui(sregion_entries()) })
+  
+  observeEvent(input$sregion_load_btn, {
+    entries <- sregion_entries()
+    req(length(entries) > 0)
+    images <- build_images_payload(entries, input$sregion_overlay_opacity)
+    session$onFlushed(function() {
+      session$sendCustomMessage("loadImages", list(images = images))
+    }, once = TRUE)
+  })
+  
+  # ===========================================================================
+  # SHARED: lazy annotation fetch — keyed by containerId, so it works
+  # regardless of which page's images requested it.
+  # ===========================================================================
+  
   observeEvent(input$request_annotations, {
     reqs <- input$request_annotations$requests
     req(length(reqs) > 0)
