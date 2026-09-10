@@ -3,8 +3,61 @@ library(bslib)
 library(histoslider)
 library(httr)
 library(shinycssloaders)
+library(khroma)
+library(shinyWidgets)
 
 source("R/functions.R")
+
+# ---------------------------------------------------------------------------
+# donor metadata field spec — THE single source of truth for what metadata
+# exists in this app. load_specimen_metadata_csv() only ever reads the
+# columns declared here (via `csv_column`); any other column in the
+# specimen CSV is ignored automatically. Adding/removing a metadata field is
+# entirely an edit here — no other file needs to change.
+#
+#   - "range"   fields: a histoslider over the raw numeric column. do NOT
+#     set min/max here — always derived from real data (derive_metadata_fields()),
+#     never guessed.
+#   - "ordinal" fields: categorical values with a meaningful order — declare
+#     `choices` IN ORDER (position 1..N is what gets filtered on via a
+#     histoslider). choices must always be given explicitly; there's no way
+#     to safely auto-derive a clinically-correct order from raw data.
+#   - "select"  fields: unordered categorical values, filtered via checkboxes.
+#     choices are OPTIONAL here — omit them to auto-derive from real data
+#     (new values then show up with no code change); if hardcoded, that list
+#     is authoritative and won't be touched by real data.
+# ---------------------------------------------------------------------------
+metadata_fields <- list(
+  list(id = "age_at_death",   label = "Age at death",     type = "range",
+       csv_column = "Age at death (years)"),
+  list(id = "sex",             label = "Sex",              type = "select",
+       choices = c("Female", "Male"), csv_column = "Sex"),
+  list(id = "apoe_genotype",   label = "APOE genotype",    type = "select",
+       choices = c("2/2", "2/3", "2/4", "3/3", "3/4", "4/4"), csv_column = "APOE genotype"),
+  list(id = "cog_status",      label = "Cognitive status", type = "select",
+       choices = c("Dementia", "No dementia"), csv_column = "Cognitive status"),
+  list(id = "adnc",            label = "ADNC",             type = "ordinal",
+       choices = c("Not AD", "Low", "Intermediate", "High"), csv_column = "ADNC"),
+  list(id = "thal_phase",      label = "Thal phase",       type = "ordinal",
+       choices = as.character(0:5), csv_column = "Thal phase"),
+  list(id = "braak_stage",     label = "Braak stage",      type = "ordinal",
+       choices = c("0", "I", "II", "III", "IV", "V", "VI"), csv_column = "Braak stage"),
+  list(id = "cerad_score",     label = "CERAD score",      type = "ordinal",
+       choices = c("Absent", "Sparse", "Moderate", "Frequent"), csv_column = "CERAD score"),
+  list(id = "years_education", label = "Years of education", type = "range",
+       csv_column = "Years of education (years)"),
+  list(id = "cps",             label = "Continuous Pseudo-progression Score (CPS)", type = "range",
+       csv_column = "Continuous Pseudo-progression Score")
+)
+
+# ---------------------------------------------------------------------------
+# donor metadata — loaded from the real specimen csv (no dummy-data fallback:
+# a bad path here should error loudly rather than silently show fake data).
+# ---------------------------------------------------------------------------
+specimen_metadata_csv_path <- "ins/SpecimenMetadata.csv"
+
+donor_metadata  <- load_specimen_metadata_csv(specimen_metadata_csv_path)
+metadata_fields <- derive_metadata_fields(metadata_fields, donor_metadata)
 
 # ---------------------------------------------------------------------------
 # manifest source — a single csv covering any number of donors. required
@@ -17,7 +70,7 @@ source("R/functions.R")
 # any donor/region/stain appearing in this csv is picked up automatically,
 # no code changes needed elsewhere.
 # ---------------------------------------------------------------------------
-manifest_csv_path <- "ins/260909_manifest_fill.csv"  # e.g. "ins/AllDonorsManifest.csv"
+manifest_csv_path <- "ins/260909_manifest_fill.csv"
 
 csv_entries <- tryCatch(read_manifest_csv_entries(manifest_csv_path), error = function(e) {
   warning("could not read manifest csv: ", manifest_csv_path, " - ", e$message)
@@ -29,53 +82,31 @@ donor_choices   <- names(donor_manifest)
 all_stains      <- get_all_stains()
 
 # ---------------------------------------------------------------------------
-# donor metadata — loaded from the real specimen csv (no dummy-data fallback:
-# a bad path here should error loudly rather than silently show fake data).
+# groups metadata_fields into cards for display (currently used under the
+# single image on the Home page — see render_donor_metadata_card()). edit
+# this to add/remove fields or reorder/regroup them; it only references
+# metadata_fields' ids, so it can't drift out of sync with the field specs
+# above. any field id omitted here simply won't be shown in a card (it's
+# still fully usable everywhere else — filters, accordions, etc).
 # ---------------------------------------------------------------------------
-specimen_metadata_csv_path <- "ins/SpecimenMetadata.csv"
-
-donor_metadata <- load_specimen_metadata_csv(specimen_metadata_csv_path)
-
-# each field needs id/label/type, set here and never auto-changed:
-#   - "range" fields: do NOT set min/max here — they are always derived from
-#     the real data below (see derive_metadata_fields()), never guessed.
-#   - "select" fields: choices are OPTIONAL here. If you hardcode `choices`,
-#     that list is authoritative and won't be touched by real data (so a
-#     brand-new category value in future data would need to be added here
-#     manually). Omit `choices` entirely to have them auto-derived from
-#     donor_metadata instead (new values then show up with no code change).
-metadata_fields <- list(
-  list(id = "age_at_death",    label = "Age at death",      type = "range"),
-  list(id = "sex",              label = "Sex",               type = "select", choices = c("Female", "Male")),
-  list(id = "apoe_genotype",    label = "APOE genotype",     type = "select",
-       choices = c("2/2", "2/3", "2/4", "3/3", "3/4", "4/4")),
-  list(id = "cog_status",       label = "Cognitive status",  type = "select",
-       choices = c("Dementia", "No dementia")),
-  list(id = "adnc",             label = "ADNC",               type = "select",
-       choices = c("Not AD", "Low", "Intermediate", "High")),
-  list(id = "thal_phase",       label = "Thal phase",         type = "select"),  # choices auto-derived
-  list(id = "braak_stage",      label = "Braak stage",        type = "select"),  # choices auto-derived
-  list(id = "cerad_score",      label = "CERAD score",        type = "select"),  # choices auto-derived
-  list(id = "years_education", label = "Years of education", type = "range"),
-  list(id = "cps",              label = "Continuous Pseudo-progression Score (CPS)", type = "range")
+metadata_display_groups <- list(
+  "Demographic" = c("age_at_death", "sex", "apoe_genotype", "years_education"),
+  "Pathology"   = c("cog_status", "adnc", "thal_phase", "braak_stage", "cerad_score", "cps")
 )
 
-metadata_fields <- derive_metadata_fields(metadata_fields, donor_metadata)
+# shared color used for BOTH histoslider bars and the categorical histogram
+# bars (register_metadata_histograms()), so all metadata charts look
+# consistent. change this one value to restyle every metadata chart at once.
+metadata_chart_color <- "black"
 
 # ---------------------------------------------------------------------------
-# annotation colors — set a PALETTE, not a per-label dictionary. each
-# annotation label gets a color from this palette automatically (assigned
-# consistently via a hash of the label, so the same label always gets the
-# same color) — no need to know every label in advance or maintain a
-# per-label mapping by hand. set to character(0) to disable overrides
-# entirely and keep each file's original HALO-authored color instead.
-#
-# any R color vector works here — a hand-picked list, or a real colormap:
-#   grDevices::hcl.colors(n, palette = "Dark 3")
-#   RColorBrewer::brewer.pal(n, "Set2")
-#   viridisLite::viridis(n)
+# annotation colors are chosen automatically per load — see
+# build_annotation_color_map() in functions.r. it picks a colorblind-friendly
+# qualitative palette from khroma sized to how many distinct annotation
+# labels are actually present (muted <10, sunset 10-11, nightfall 12-17),
+# and assigns one color per label. nothing to configure here unless you want
+# to swap the palette scheme itself.
 # ---------------------------------------------------------------------------
-annotation_color_palette <- grDevices::hcl.colors(8, palette = "Dark 3")
 
 # shared theme — passed to navbarPage(theme = ...) in ui.R.
 app_theme <- bslib::bs_theme(bootswatch = "lux")

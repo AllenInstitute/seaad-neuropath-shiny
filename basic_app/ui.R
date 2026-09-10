@@ -2,6 +2,24 @@ library(shiny)
 library(bslib)
 library(shinycssloaders)
 
+# checkbox + hover tooltip, reused on every comparison page except Home
+# (fetching annotations for a single image is cheap enough to always do).
+# uses bslib::tooltip() rather than the shinytip package — shinytip's exact
+# function name/API couldn't be confirmed against a stable release (its own
+# author still lists it as "WIP"), whereas bslib::tooltip() is documented
+# and already a dependency here.
+fetch_annotations_control <- function(id) {
+  tags$div(
+    style = "display:flex; align-items:center; gap:6px;",
+    checkboxInput(id, "Fetch annotations", value = FALSE),
+    bslib::tooltip(
+      icon("circle-info", style = "color:#888; cursor:help;"),
+      "Fetching annotations increases load time significantly based on image count.",
+      placement = "right"
+    )
+  )
+}
+
 tagList(
   
   tags$head(
@@ -21,6 +39,11 @@ tagList(
                sidebarPanel(
                  width = 4,
                  selectInput("home_donor", "Donor", choices = with_placeholder(donor_choices)),
+                 checkboxInput("home_filter_donors", "Filter donors by metadata", value = FALSE),
+                 conditionalPanel(
+                   condition = "input.home_filter_donors",
+                   build_metadata_accordion("home", donor_metadata)
+                 ),
                  selectInput("home_region", "Region", choices = with_placeholder(character(0))),
                  selectInput("home_stain", "Stain", choices = with_placeholder(character(0))),
                  tags$hr(),
@@ -34,8 +57,10 @@ tagList(
                ),
                mainPanel(
                  width = 8,
-                 withSpinner(uiOutput("home_annotation_ui"), type = 5),
-                 withSpinner(uiOutput("home_viewer_grid"), type = 5)
+                 uiOutput("home_annotation_ui"),
+                 tags$div(style = "height:20px;"),
+                 uiOutput("home_viewer_grid"),
+                 uiOutput("home_donor_metadata")
                )
              )
     ),
@@ -48,6 +73,11 @@ tagList(
                sidebarPanel(
                  width = 4,
                  selectInput("dstain_donor", "Donor", choices = with_placeholder(donor_choices)),
+                 checkboxInput("dstain_filter_donors", "Filter donors by metadata", value = FALSE),
+                 conditionalPanel(
+                   condition = "input.dstain_filter_donors",
+                   build_metadata_accordion("dstain", donor_metadata)
+                 ),
                  selectInput("dstain_region", "Region", choices = with_placeholder(character(0))),
                  selectInput("dstain_stains", "Stains to compare", choices = character(0), multiple = TRUE),
                  tags$hr(),
@@ -56,14 +86,16 @@ tagList(
                    condition = "input.dstain_show_overlay",
                    sliderInput("dstain_overlay_opacity", "Overlay opacity", min = 0, max = 1, value = 0, step = 0.05)
                  ),
+                 fetch_annotations_control("dstain_fetch_annotations"),
                  actionButton("dstain_load_btn", "Load / Compare", class = "btn-primary")
                ),
                mainPanel(
                  width = 8,
                  uiOutput("dstain_context_card"),   # only appears once Load has been clicked
                  tags$div(style = "height:18px;"),  # space between the card and the annotation checkboxes
-                 withSpinner(uiOutput("dstain_annotation_ui"), type = 5),
-                 withSpinner(uiOutput("dstain_viewer_grid"), type = 5)
+                 uiOutput("dstain_annotation_ui"),
+                 tags$div(style = "height:20px;"),
+                 uiOutput("dstain_viewer_grid")
                )
              )
     ),
@@ -97,14 +129,16 @@ tagList(
                    condition = "input.sdonor_show_overlay",
                    sliderInput("sdonor_overlay_opacity", "Overlay opacity", min = 0, max = 1, value = 0, step = 0.05)
                  ),
+                 fetch_annotations_control("sdonor_fetch_annotations"),
                  actionButton("sdonor_load_btn", "Load / Compare", class = "btn-primary")
                ),
                mainPanel(
                  width = 8,
                  uiOutput("sdonor_context_card"),
                  tags$div(style = "height:18px;"),
-                 withSpinner(uiOutput("sdonor_annotation_ui"), type = 5),
-                 withSpinner(uiOutput("sdonor_viewer_grid"), type = 5)
+                 uiOutput("sdonor_annotation_ui"),
+                 tags$div(style = "height:20px;"),
+                 uiOutput("sdonor_viewer_grid")
                )
              )
     ),
@@ -118,6 +152,11 @@ tagList(
                sidebarPanel(
                  width = 4,
                  selectInput("sregion_donor", "Donor", choices = with_placeholder(donor_choices)),
+                 checkboxInput("sregion_filter_donors", "Filter donors by metadata", value = FALSE),
+                 conditionalPanel(
+                   condition = "input.sregion_filter_donors",
+                   build_metadata_accordion("sregion", donor_metadata)
+                 ),
                  selectInput("sregion_stain", "Stain", choices = with_placeholder(character(0))),
                  selectInput("sregion_regions", "Regions to compare", choices = character(0), multiple = TRUE),
                  tags$hr(),
@@ -126,44 +165,24 @@ tagList(
                    condition = "input.sregion_show_overlay",
                    sliderInput("sregion_overlay_opacity", "Overlay opacity", min = 0, max = 1, value = 0, step = 0.05)
                  ),
+                 fetch_annotations_control("sregion_fetch_annotations"),
                  actionButton("sregion_load_btn", "Load / Compare", class = "btn-primary")
                ),
                mainPanel(
                  width = 8,
                  uiOutput("sregion_context_card"),
                  tags$div(style = "height:18px;"),
-                 withSpinner(uiOutput("sregion_annotation_ui"), type = 5),
-                 withSpinner(uiOutput("sregion_viewer_grid"), type = 5)  # shows a validation error here if nothing matches
+                 uiOutput("sregion_annotation_ui"),
+                 tags$div(style = "height:20px;"),
+                 uiOutput("sregion_viewer_grid")  # shows a validation error here if nothing matches
                )
              )
     ),
     
     # =========================================================================
-    # about — freely editable. no full metadata table (summary only).
+    # about — defined in R/aboutpage.R, edited independently of this file.
     # =========================================================================
-    tabPanel("About",
-             fluidPage(
-               h3("About this viewer"),
-               
-               h4("Usage"),
-               p("Pick a donor, region, and stain on the Home tab to view a single slide, ",
-                 "or use one of the Compare tabs to view several images side by side. ",
-                 "Annotation checkboxes only fetch their underlying file the first time ",
-                 "they're switched on."),
-               
-               h4("Contact"),
-               p("EDIT ME: name / email / team distribution list for questions about this viewer."),
-               
-               h4("Acknowledgements"),
-               p("EDIT ME: funding sources, consortia, data-generating labs, etc."),
-               
-               h4("Specimen metadata"),
-               p("Loaded from: ", tags$code(specimen_metadata_csv_path)),
-               textOutput("about_metadata_summary"),
-               br(),
-               downloadButton("about_download_metadata", "Download specimen metadata CSV")
-             )
-    )
+    about_tab_ui()
   ),
   
   tags$script(HTML("
@@ -199,12 +218,11 @@ tagList(
       while (svg.firstChild) svg.removeChild(svg.firstChild);
 
       (v.annotationGroups || []).forEach(function(group, gi) {
-        if (!group.polygons) return; // not fetched yet — nothing to draw
         var g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
         g.setAttribute('id', containerId + '-group-' + gi);
         if (v.hiddenGroups[gi]) g.style.display = 'none';
 
-        group.polygons.forEach(function(region) {
+        (group.polygons || []).forEach(function(region) {
           var pts = region.points.split(' ').map(function(p) {
             var xy = p.split(',');
             var vp = new OpenSeadragon.Point(parseFloat(xy[0]), parseFloat(xy[1]));
@@ -225,42 +243,21 @@ tagList(
     }
 
     // one master checkbox per unique annotation label toggles that label across
-    // every currently-loaded image with a matching file; unfetched groups get
-    // batched into one request to the server (lazy loading).
+    // every currently-loaded image with a matching file. All annotation
+    // polygons were already parsed server-side and sent along in the
+    // 'loadImages' message, so this is a pure visibility toggle — no fetch,
+    // no round-trip to the server.
     function toggleAnnotationLabel(label, visible) {
-      var pending = [];
-
       Object.keys(viewers).forEach(function(containerId) {
         var v = viewers[containerId];
         (v.annotationGroups || []).forEach(function(group, gi) {
           if (group.label !== label) return;
           v.hiddenGroups[gi] = !visible;
-
-          if (visible && !group.polygons) {
-            pending.push({ containerId: containerId, groupIndex: gi, url: group.url, refWidth: group.refWidth, label: label });
-          } else {
-            var gEl = document.getElementById(containerId + '-group-' + gi);
-            if (gEl) gEl.style.display = visible ? 'block' : 'none';
-          }
+          var gEl = document.getElementById(containerId + '-group-' + gi);
+          if (gEl) gEl.style.display = visible ? 'block' : 'none';
         });
       });
-
-      if (pending.length > 0) {
-        Shiny.setInputValue('request_annotations', { requests: pending }, { priority: 'event' });
-      }
     }
-
-    // server has finished parsing a batch of annotation files — store the polygons and redraw.
-    Shiny.addCustomMessageHandler('annotationsParsed', function(message) {
-      var touched = {};
-      (message.results || []).forEach(function(r) {
-        var v = viewers[r.containerId];
-        if (!v || !v.annotationGroups[r.groupIndex]) return;
-        v.annotationGroups[r.groupIndex].polygons = r.polygons;
-        touched[r.containerId] = true;
-      });
-      Object.keys(touched).forEach(function(cid) { redrawAnnotations(cid); });
-    });
 
     // (re)creates an OpenSeadragon viewer per image spec sent from the server.
     Shiny.addCustomMessageHandler('loadImages', function(message) {

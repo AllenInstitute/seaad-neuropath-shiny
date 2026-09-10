@@ -25,6 +25,21 @@ function(input, output, session) {
   # home — single donor/region/stain
   # ===========================================================================
   
+  register_metadata_histograms(output, "home", donor_metadata)
+  
+  # narrows the Donor dropdown to only donors matching the metadata filters
+  # when the toggle is on; reads input$home_filter_donors AND (indirectly,
+  # inside filter_donors_by_metadata) every home_meta_* input, so this
+  # re-runs automatically whenever any of them change.
+  observe({
+    filtered <- if (isTRUE(input$home_filter_donors)) {
+      intersect(donor_choices, filter_donors_by_metadata(donor_metadata, input, "home"))
+    } else {
+      donor_choices
+    }
+    updateSelectInput(session, "home_donor", choices = with_placeholder(filtered))
+  })
+  
   observeEvent(input$home_donor, {
     req(input$home_donor, nzchar(input$home_donor))
     updateSelectInput(session, "home_region", choices = with_placeholder(get_regions_for_donor(input$home_donor)))
@@ -38,6 +53,11 @@ function(input, output, session) {
   
   output$home_annotation_ui <- renderUI({ render_annotation_master_ui(home_entries_rv()) })
   output$home_viewer_grid   <- renderUI({ render_viewer_grid_ui(home_entries_rv(), label_field = "stain") })
+  output$home_donor_metadata <- renderUI({
+    entries <- home_entries_rv()
+    req(length(entries) > 0)
+    render_donor_metadata_card(entries[[1]]$donor)
+  })
   
   observeEvent(input$home_load_btn, {
     req(input$home_donor, input$home_region, input$home_stain,
@@ -48,6 +68,12 @@ function(input, output, session) {
     entries <- list(list(donor = input$home_donor, region = input$home_region, stain = input$home_stain, slot = slot))
     home_entries_rv(entries)
     
+    # all of this entry's annotation files get parsed synchronously inside
+    # build_images_payload() now (see its comment for why), so this can take
+    # real time — show a page spinner for the actual duration.
+    shinycssloaders::showPageSpinner(type = 5)
+    on.exit(shinycssloaders::hidePageSpinner(), add = TRUE)
+    
     images <- build_images_payload(entries, input$home_overlay_opacity, input$home_show_overlay)
     session$onFlushed(function() session$sendCustomMessage("loadImages", list(images = images)), once = TRUE)
   })
@@ -55,6 +81,17 @@ function(input, output, session) {
   # ===========================================================================
   # compare stains — constraints: donor + region. varies: stain.
   # ===========================================================================
+  
+  register_metadata_histograms(output, "dstain", donor_metadata)
+  
+  observe({
+    filtered <- if (isTRUE(input$dstain_filter_donors)) {
+      intersect(donor_choices, filter_donors_by_metadata(donor_metadata, input, "dstain"))
+    } else {
+      donor_choices
+    }
+    updateSelectInput(session, "dstain_donor", choices = with_placeholder(filtered))
+  })
   
   observeEvent(input$dstain_donor, {
     req(input$dstain_donor, nzchar(input$dstain_donor))
@@ -90,7 +127,13 @@ function(input, output, session) {
     entries <- Filter(Negate(is.null), entries)
     shiny::validate(shiny::need(length(entries) > 0, "No valid images found for this donor + region + stain selection."))
     
+    entries <- maybe_skip_annotations(entries, input$dstain_fetch_annotations)
+    entries <- sort_entries_by(entries, "stain")
     dstain_entries_rv(entries)
+    
+    shinycssloaders::showPageSpinner(type = 5)
+    on.exit(shinycssloaders::hidePageSpinner(), add = TRUE)
+    
     images <- build_images_payload(entries, input$dstain_overlay_opacity, input$dstain_show_overlay)
     session$onFlushed(function() session$sendCustomMessage("loadImages", list(images = images)), once = TRUE)
   })
@@ -141,7 +184,13 @@ function(input, output, session) {
     entries <- Filter(Negate(is.null), entries)
     shiny::validate(shiny::need(length(entries) > 0, "No donors have a valid image for this stain + region selection."))
     
+    entries <- maybe_skip_annotations(entries, input$sdonor_fetch_annotations)
+    entries <- sort_entries_by(entries, "donor")
     sdonor_entries_rv(entries)
+    
+    shinycssloaders::showPageSpinner(type = 5)
+    on.exit(shinycssloaders::hidePageSpinner(), add = TRUE)
+    
     images <- build_images_payload(entries, input$sdonor_overlay_opacity, input$sdonor_show_overlay)
     session$onFlushed(function() session$sendCustomMessage("loadImages", list(images = images)), once = TRUE)
   })
@@ -150,6 +199,17 @@ function(input, output, session) {
   # compare regions — constraints: donor + stain. varies: region (user-picked
   # from whichever regions that donor+stain combination actually has).
   # ===========================================================================
+  
+  register_metadata_histograms(output, "sregion", donor_metadata)
+  
+  observe({
+    filtered <- if (isTRUE(input$sregion_filter_donors)) {
+      intersect(donor_choices, filter_donors_by_metadata(donor_metadata, input, "sregion"))
+    } else {
+      donor_choices
+    }
+    updateSelectInput(session, "sregion_donor", choices = with_placeholder(filtered))
+  })
   
   observeEvent(input$sregion_donor, {
     req(input$sregion_donor, nzchar(input$sregion_donor))
@@ -185,45 +245,22 @@ function(input, output, session) {
     entries <- Filter(Negate(is.null), entries)
     shiny::validate(shiny::need(length(entries) > 0, "No valid images found for the selected regions."))
     
+    entries <- maybe_skip_annotations(entries, input$sregion_fetch_annotations)
+    entries <- sort_entries_by(entries, "region")
     sregion_entries_rv(entries)
+    
+    shinycssloaders::showPageSpinner(type = 5)
+    on.exit(shinycssloaders::hidePageSpinner(), add = TRUE)
+    
     images <- build_images_payload(entries, input$sregion_overlay_opacity, input$sregion_show_overlay)
     session$onFlushed(function() session$sendCustomMessage("loadImages", list(images = images)), once = TRUE)
   })
   
   # ===========================================================================
-  # about page — brief summary only, no full table (per request)
+  # about page — defined in R/aboutpage.R, edited independently of this file.
   # ===========================================================================
   
-  output$about_metadata_summary <- renderText({
-    sprintf("%d donors, %d metadata fields.", nrow(donor_metadata), ncol(donor_metadata) - 1)
-  })
-  
-  output$about_download_metadata <- downloadHandler(
-    filename = function() basename(specimen_metadata_csv_path),
-    content  = function(file) file.copy(specimen_metadata_csv_path, file)
-  )
-  
-  # ===========================================================================
-  # shared: lazy annotation fetch — keyed by containerId, works regardless of
-  # which page's images requested it. applies any configured color overrides.
-  # ===========================================================================
-  
-  observeEvent(input$request_annotations, {
-    reqs <- input$request_annotations$requests
-    req(length(reqs) > 0)
-    
-    shinycssloaders::showPageSpinner(type = 5)
-    on.exit(shinycssloaders::hidePageSpinner(), add = TRUE)
-    
-    results <- lapply(reqs, function(r) {
-      label <- r$label
-      polys <- parse_halo_annotations_cached(r$url, r$refWidth)
-      polys <- apply_annotation_color_override(label, polys)
-      list(containerId = r$containerId, groupIndex = r$groupIndex, polygons = polys)
-    })
-    
-    session$sendCustomMessage("annotationsParsed", list(results = results))
-  })
+  about_tab_server(input, output, session)
   
   # ===========================================================================
   # switching tabs clears every page back to blank: loaded images, dropdown
@@ -234,6 +271,7 @@ function(input, output, session) {
   
   observeEvent(input$main_nav, {
     home_entries_rv(list())
+    updateCheckboxInput(session, "home_filter_donors", value = FALSE)
     updateSelectInput(session, "home_donor", selected = "")
     updateSelectInput(session, "home_region", choices = with_placeholder(character(0)))
     updateSelectInput(session, "home_stain", choices = with_placeholder(character(0)))
@@ -241,10 +279,12 @@ function(input, output, session) {
     updateSliderInput(session, "home_overlay_opacity", value = 0)
     
     dstain_entries_rv(list())
+    updateCheckboxInput(session, "dstain_filter_donors", value = FALSE)
     updateSelectInput(session, "dstain_donor", selected = "")
     updateSelectInput(session, "dstain_region", choices = with_placeholder(character(0)))
     updateSelectInput(session, "dstain_stains", choices = character(0), selected = character(0))
     updateCheckboxInput(session, "dstain_show_overlay", value = FALSE)
+    updateCheckboxInput(session, "dstain_fetch_annotations", value = FALSE)
     updateSliderInput(session, "dstain_overlay_opacity", value = 0)
     
     sdonor_entries_rv(list())
@@ -253,13 +293,16 @@ function(input, output, session) {
     updateRadioButtons(session, "sdonor_subset_mode", selected = "all")
     updateSelectInput(session, "sdonor_donors_manual", choices = donor_choices, selected = character(0))
     updateCheckboxInput(session, "sdonor_show_overlay", value = FALSE)
+    updateCheckboxInput(session, "sdonor_fetch_annotations", value = FALSE)
     updateSliderInput(session, "sdonor_overlay_opacity", value = 0)
     
     sregion_entries_rv(list())
+    updateCheckboxInput(session, "sregion_filter_donors", value = FALSE)
     updateSelectInput(session, "sregion_donor", selected = "")
     updateSelectInput(session, "sregion_stain", choices = with_placeholder(character(0)))
     updateSelectInput(session, "sregion_regions", choices = character(0), selected = character(0))
     updateCheckboxInput(session, "sregion_show_overlay", value = FALSE)
+    updateCheckboxInput(session, "sregion_fetch_annotations", value = FALSE)
     updateSliderInput(session, "sregion_overlay_opacity", value = 0)
   }, ignoreInit = TRUE)
 }

@@ -16,7 +16,8 @@
 #   mutate(donor = str_split_i(path,"/",2),
 #          roi = str_split_i(path,"/",1),
 #          stain = str_split_i(str_split_i(path,"/",3),"-",-1),
-#          stain_type = case_when(stain == "AT" ~ "AT8",
+#          stain = ifelse(str_detect(path, "middle-temporal-gyrus-and-superior-temporal-gyrus"), str_split_i(str_split_i(path,"/",3),"-",-2), stain),
+#          stain_type = case_when(stain == "AT" ~ "pTau (AT8) and pTDP-43",
 #                            stain == "NEUN" ~ "NeuN",
 #                            stain == "ASYN" ~ "a-Synuclein",
 #                            stain == "GFAP" ~ "GFAP",
@@ -69,12 +70,12 @@
 # for (i in which(is_raw_image)) {
 #   url <- s3_to_https(manifest$s3_uri[i])
 #   cat(sprintf("[%d/%d] %s ... ", i, nrow(manifest), url))
-#   
+# 
 #   dims <- tryCatch(read_tiff_dimensions(url), error = function(e) {
-#     cat("FAILED:", conditionMessage(e), "\n")
+# cat("FAILED:", conditionMessage(e), "\n")
 #     list(width = NA_real_, height = NA_real_)
 #   })
-#   
+# 
 #   if (!is.na(dims$width)) {
 #     manifest$width[i]  <- dims$width
 #     manifest$height[i] <- dims$height
@@ -92,3 +93,5 @@
 # 
 # # write.csv(manifest, "outs/260909_manifest_fill.csv", row.names = FALSE)
 # 
+
+

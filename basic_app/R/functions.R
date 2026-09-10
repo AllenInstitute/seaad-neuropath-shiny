@@ -53,7 +53,10 @@ read_tiff_dimensions <- function(url) {
   endian <- if (byte_order == "II") "little" else "big"
   magic <- readBin(header[3:4], "integer", size = 2, endian = endian, signed = FALSE)
   if (!(magic %in% c(42))) stop("not a classic TIFF (or is BigTIFF) — use vipsheader instead")
-  ifd_offset <- readBin(header[5:8], "integer", size = 4, endian = endian, signed = FALSE)
+  # readBin only supports signed=FALSE for 1-2 byte integers, not 4 — these
+  # offsets/values are always well under 2^31 in practice, so plain signed
+  # reads are equivalent and avoid an R warning on every call.
+  ifd_offset <- readBin(header[5:8], "integer", size = 4, endian = endian)
   
   # entry count (2 bytes) + up to 64 entries (12 bytes each) + next-ifd offset (4 bytes)
   ifd_bytes <- http_range_bytes(url, ifd_offset, 2 + 64 * 12 + 4)
@@ -69,7 +72,7 @@ read_tiff_dimensions <- function(url) {
     value <- if (type == 3) {
       readBin(entry[9:10], "integer", size = 2, endian = endian, signed = FALSE)
     } else {
-      readBin(entry[9:12], "integer", size = 4, endian = endian, signed = FALSE)
+      readBin(entry[9:12], "integer", size = 4, endian = endian)
     }
     if (tag == 256) width  <- value
     if (tag == 257) height <- value
@@ -186,30 +189,30 @@ build_donor_manifest_from_entries <- function(entries) {
 get_regions_for_donor <- function(donor) {
   regions <- donor_manifest[[donor]]
   if (is.null(regions)) return(character(0))
-  names(regions)
+  sort(names(regions))
 }
 
 get_all_regions <- function() {
-  unique(unlist(lapply(names(donor_manifest), get_regions_for_donor), use.names = FALSE))
+  sort(unique(unlist(lapply(names(donor_manifest), get_regions_for_donor), use.names = FALSE)))
 }
 
 # stains available for one specific donor+region pair (exact, no flattening).
 get_stain_choices_for_donor_region <- function(donor, region) {
   slot <- donor_manifest[[donor]][[region]]
   if (is.null(slot)) return(character(0))
-  names(slot)
+  sort(names(slot))
 }
 
 # a donor's stains flattened across all of that donor's regions.
 get_stain_choices_for_donor <- function(donor) {
   regions <- donor_manifest[[donor]]
   if (is.null(regions)) return(character(0))
-  unique(unlist(lapply(regions, names), use.names = FALSE))
+  sort(unique(unlist(lapply(regions, names), use.names = FALSE)))
 }
 
 # all stains present for any donor, across the whole manifest.
 get_all_stains <- function() {
-  unique(unlist(lapply(names(donor_manifest), get_stain_choices_for_donor), use.names = FALSE))
+  sort(unique(unlist(lapply(names(donor_manifest), get_stain_choices_for_donor), use.names = FALSE)))
 }
 
 # regions where at least one donor has the given stain.
@@ -219,20 +222,37 @@ get_regions_for_stain <- function(stain) {
     dr <- get_regions_for_donor(d)
     dr[vapply(dr, function(r) !is.null(donor_manifest[[d]][[r]][[stain]]), logical(1))]
   }), use.names = FALSE)
-  unique(regs)
+  sort(unique(regs))
 }
 
 # regions of ONE donor that actually have the given stain.
 get_regions_with_stain_for_donor <- function(donor, stain) {
   regs <- get_regions_for_donor(donor)
-  regs[vapply(regs, function(r) !is.null(donor_manifest[[donor]][[r]][[stain]]), logical(1))]
+  sort(regs[vapply(regs, function(r) !is.null(donor_manifest[[donor]][[r]][[stain]]), logical(1))])
 }
 
 # donors that actually have a valid image for a given stain+region pair —
 # used to keep the "select specific donors" list free of dead-end choices.
 get_donors_with_stain_region <- function(stain, region) {
   donors <- names(donor_manifest)
-  donors[vapply(donors, function(d) !is.null(donor_manifest[[d]][[region]][[stain]]), logical(1))]
+  sort(donors[vapply(donors, function(d) !is.null(donor_manifest[[d]][[region]][[stain]]), logical(1))])
+}
+
+# when the "Fetch annotations" checkbox is off, strips each entry's
+# annotation_files so nothing gets parsed and no annotation checklist shows
+# up for that load — used by the three comparison pages (Home always
+# fetches, since a single image is cheap regardless).
+maybe_skip_annotations <- function(entries, fetch_annotations) {
+  if (isTRUE(fetch_annotations)) return(entries)
+  lapply(entries, function(e) { e$slot$annotation_files <- list(); e })
+}
+
+# sorts a set of loaded entries alphabetically by whichever field varies on
+# the page they're shown on (stain/donor/region) — used so images always
+# appear in a predictable left-to-right/top-to-bottom order.
+sort_entries_by <- function(entries, field) {
+  if (length(entries) == 0) return(entries)
+  entries[order(vapply(entries, function(e) e[[field]], character(1)))]
 }
 
 # sanitized identifier safe for use as an html element id / js key.
@@ -258,8 +278,9 @@ with_placeholder <- function(choices, label = "Select...") {
 }
 
 # ---------------------------------------------------------------------------
-# halo annotation xml parsing (lazy + cached — see server.r's handling of
-# input$request_annotations for where this actually gets called)
+# halo annotation xml parsing (eager + cached — called directly from
+# build_images_payload() at Load/Compare time; the cache means repeat loads
+# of the same file across different comparisons only ever parse it once)
 # ---------------------------------------------------------------------------
 
 # halo/imagescope-style linecolor is a decimal-packed bgr integer.
@@ -311,25 +332,43 @@ parse_halo_annotations <- function(ann_url, ref_width, skip_hidden = TRUE) {
   polygons
 }
 
-# NOTE: annotation names are resolved from explicit manifest columns only —
-# see resolve_annotation_name() above. nothing is parsed from filenames.
-
-# deterministically assigns a color to an annotation label from
-# annotation_color_palette (global.r) — same label always maps to the same
-# color (within one palette), via a simple string hash, so no per-label
-# bookkeeping is needed as new labels show up. returns NULL (meaning "keep
-# each file's original HALO-authored color") if the palette is empty.
-assign_annotation_color <- function(label) {
-  if (length(annotation_color_palette) == 0) return(NULL)
-  idx <- (sum(utf8ToInt(label)) %% length(annotation_color_palette)) + 1
-  annotation_color_palette[idx]
+# all unique annotation labels across a set of entries, sorted — this is the
+# actual "number of annotations" build_annotation_color_map() sizes its
+# palette to, and also what the checklist (render_annotation_master_ui) and
+# the initial payload (build_images_payload) both derive their colors from,
+# so all three always agree on the same label -> color mapping for one load.
+get_unique_annotation_labels <- function(entries) {
+  labels <- character(0)
+  for (e in entries) {
+    if (length(e$slot$annotation_files) > 0) {
+      labels <- c(labels, vapply(e$slot$annotation_files, function(f) f$name, character(1)))
+    }
+  }
+  sort(unique(labels))
 }
 
-# applies the palette-assigned color to every polygon parsed from a file.
-apply_annotation_color_override <- function(label, polygons) {
-  override <- assign_annotation_color(label)
-  if (is.null(override)) return(polygons)
-  lapply(polygons, function(p) { p$color <- override; p })
+# picks a colorblind-friendly qualitative palette SIZED to how many distinct
+# labels actually need a color, using khroma's Paul Tol schemes:
+#   n <  10  -> "muted"    (max 9)
+#   n in 10-11 -> "sunset"    (max 11)
+#   n in 12-17 -> "nightfall" (max 17; also the fallback ceiling if n > 17,
+#                              which shouldn't happen in practice)
+# returns a named list: label -> hex color.
+build_annotation_color_map <- function(labels) {
+  if (length(labels) == 0) return(list())
+  n <- length(labels)
+  
+  palette <- if (n < 10) {
+    as.character(khroma::colour("muted")(n))
+  } else if (n <= 11) {
+    as.character(khroma::colour("sunset")(n))
+  } else {
+    as.character(khroma::colour("nightfall")(min(n, 17)))
+  }
+  
+  # recycle if n somehow exceeds 17 (shouldn't happen) rather than erroring
+  idx <- ((seq_len(n) - 1) %% length(palette)) + 1
+  stats::setNames(as.list(palette[idx]), labels)
 }
 
 # in-memory cache so repeatedly toggling/loading the same file only parses it once.
@@ -352,26 +391,13 @@ parse_halo_annotations_cached <- function(url, ref_width) {
 }
 
 # ---------------------------------------------------------------------------
-# donor metadata — spec-driven (metadata_fields, defined in global.r) so
-# adding a field only means adding one list() entry there. type "range" ->
-# histoslider, always DERIVED min/max (never hardcoded — see
-# derive_metadata_fields()). type "select" -> count-bar checkboxes; choices
-# are derived from data UNLESS the field already hardcodes them in global.r.
+# donor metadata — fully spec-driven by metadata_fields (defined in
+# global.r). Each field declares its own `csv_column` (the exact header text
+# in the specimen CSV); load_specimen_metadata_csv() only ever reads those
+# declared columns, so any OTHER column present in the file is silently
+# ignored. Adding a metadata field is entirely a global.r edit — no changes
+# needed here.
 # ---------------------------------------------------------------------------
-
-specimen_csv_column_map <- c(
-  "Donor ID"                             = "donor",
-  "Age at death (years)"                 = "age_at_death",
-  "Sex"                                   = "sex",
-  "APOE genotype"                        = "apoe_genotype",
-  "Cognitive status"                     = "cog_status",
-  "ADNC"                                  = "adnc",
-  "Thal phase"                            = "thal_phase",
-  "Braak stage"                           = "braak_stage",
-  "CERAD score"                           = "cerad_score",
-  "Years of education (years)"           = "years_education",
-  "Continuous Pseudo-progression Score"  = "cps"
-)
 
 # excel silently reinterprets genotype strings like "3/3" as dates ("3-mar").
 # since a us locale reads "m/d" as month/day, the original fraction is
@@ -390,31 +416,39 @@ decode_apoe_genotype <- function(x) {
   }, character(1), USE.NAMES = FALSE)
 }
 
-# reads the specimen metadata csv, renaming/cleaning columns into our
-# internal field ids (see specimen_csv_column_map).
-load_specimen_metadata_csv <- function(path) {
+# reads the specimen metadata csv. `donor_id_column` identifies the donor-id
+# column (not itself a metadata_fields entry); every OTHER column read is
+# whatever metadata_fields declares via its `csv_column` — so a column in
+# the file that isn't referenced by any field is simply never selected.
+load_specimen_metadata_csv <- function(path, donor_id_column = "Donor ID") {
   df <- read.csv(path, check.names = FALSE, stringsAsFactors = FALSE)
   
-  missing_cols <- setdiff(names(specimen_csv_column_map), names(df))
-  if (length(missing_cols) > 0) {
-    warning("specimen csv is missing expected columns: ", paste(missing_cols, collapse = ", "))
+  if (!(donor_id_column %in% names(df))) {
+    stop("specimen csv is missing the donor id column: '", donor_id_column, "'")
+  }
+  out <- data.frame(donor = df[[donor_id_column]], stringsAsFactors = FALSE)
+  
+  for (f in metadata_fields) {
+    col <- f$csv_column
+    if (is.null(col) || !(col %in% names(df))) {
+      warning("specimen csv is missing column '", col, "' for metadata field '", f$id, "'")
+      out[[f$id]] <- NA
+      next
+    }
+    out[[f$id]] <- df[[col]]
   }
   
-  keep <- intersect(names(specimen_csv_column_map), names(df))
-  df <- df[, keep, drop = FALSE]
-  names(df) <- specimen_csv_column_map[keep]
-  
-  if ("apoe_genotype" %in% names(df)) df$apoe_genotype <- decode_apoe_genotype(df$apoe_genotype)
-  if ("thal_phase" %in% names(df))    df$thal_phase   <- sub("^Thal\\s*", "", df$thal_phase, ignore.case = TRUE)
-  if ("braak_stage" %in% names(df))   df$braak_stage  <- sub("^Braak\\s*", "", df$braak_stage, ignore.case = TRUE)
+  if ("apoe_genotype" %in% names(out)) out$apoe_genotype <- decode_apoe_genotype(out$apoe_genotype)
+  if ("thal_phase" %in% names(out))    out$thal_phase   <- sub("^Thal\\s*", "", out$thal_phase, ignore.case = TRUE)
+  if ("braak_stage" %in% names(out))   out$braak_stage  <- sub("^Braak\\s*", "", out$braak_stage, ignore.case = TRUE)
   
   for (numeric_field in c("age_at_death", "years_education", "cps")) {
-    if (numeric_field %in% names(df)) {
-      df[[numeric_field]] <- suppressWarnings(as.numeric(df[[numeric_field]]))
+    if (numeric_field %in% names(out)) {
+      out[[numeric_field]] <- suppressWarnings(as.numeric(out[[numeric_field]]))
     }
   }
   
-  df
+  out
 }
 
 # fills in each field's bounds/choices from real data — WITHOUT overwriting
@@ -449,6 +483,14 @@ histoslider_range <- function(val) {
 
 # reads the meta_* inputs for a given page prefix and filters donor_metadata
 # down with dplyr. returns the vector of matching donor ids.
+#
+# type "range"   -> a [min,max] filter on the raw numeric column.
+# type "ordinal" -> categorical values with a meaningful order (declared via
+#                   `choices`, in order), filtered via a sliderTextInput —
+#                   input$... is a length-2 character vector of the selected
+#                   labels themselves (not positions), so this just expands
+#                   that into the corresponding subset of `choices`.
+# type "select"  -> an unordered %in% filter from the checkbox group.
 filter_donors_by_metadata <- function(metadata, input, prefix) {
   df <- metadata
   for (f in metadata_fields) {
@@ -456,6 +498,14 @@ filter_donors_by_metadata <- function(metadata, input, prefix) {
       val <- histoslider_range(input[[paste0(prefix, "_meta_", f$id, "_range")]])
       if (!is.null(val)) {
         df <- df %>% dplyr::filter(.data[[f$id]] >= val[1], .data[[f$id]] <= val[2])
+      }
+    } else if (f$type == "ordinal") {
+      val <- input[[paste0(prefix, "_meta_", f$id, "_range")]]
+      if (!is.null(val) && length(val) == 2) {
+        lo <- min(match(val, f$choices), na.rm = TRUE)
+        hi <- max(match(val, f$choices), na.rm = TRUE)
+        allowed <- f$choices[lo:hi]
+        df <- df %>% dplyr::filter(.data[[f$id]] %in% allowed)
       }
     } else {
       val <- input[[paste0(prefix, "_meta_", f$id, "_sel")]]
@@ -467,22 +517,51 @@ filter_donors_by_metadata <- function(metadata, input, prefix) {
   df$donor
 }
 
-# one bslib accordion_panel per metadata field: numeric fields get a
-# histoslider (histogram + range filter combined in one widget); categorical
-# fields get a plain checkboxGroupInput (label immediately next to each
-# checkbox, as usual) plus a separate histogram registered server-side via
-# register_metadata_histograms(). widget ids are prefixed per page.
+# wraps input_histoslider() with the shared metadata_chart_color (global.r).
+# NOTE: histoslider's documented API doesn't expose a color option — the
+# `options` argument here is unverified against the package's actual JS
+# component and may not visibly change anything. If the bar color still
+# doesn't match, the CSS override in ui.R's <style> block is the more
+# reliable lever (target whatever class the rendered bars actually use —
+# inspect one with your browser's dev tools to confirm the selector).
+build_histoslider <- function(id, values) {
+  tryCatch(
+    histoslider::input_histoslider(id, NULL, values, options = list(color = metadata_chart_color)),
+    error = function(e) histoslider::input_histoslider(id, NULL, values)
+  )
+}
+
+# one bslib accordion_panel per metadata field:
+#   "range"   -> a histoslider (histogram + range filter combined).
+#   "ordinal" -> ordered categorical values, via shinyWidgets::sliderTextInput
+#                (NOT histoslider — histoslider only supports numeric/date/
+#                datetime axes, so it can't show category labels as ticks;
+#                sliderTextInput natively shows every one of `choices` as a
+#                labeled tick on the track, which is what was asked for here,
+#                at the cost of no histogram-bar visualization for this type).
+#   "select"  -> a plain checkboxGroupInput (label immediately next to each
+#                checkbox) plus a separate histogram registered server-side
+#                via register_metadata_histograms().
+# widget ids are prefixed per page.
 build_metadata_accordion <- function(prefix, data) {
   panels <- lapply(metadata_fields, function(f) {
     body <- if (f$type == "range") {
-      histoslider::input_histoslider(paste0(prefix, "_meta_", f$id, "_range"), NULL, data[[f$id]])
+      build_histoslider(paste0(prefix, "_meta_", f$id, "_range"), data[[f$id]])
+      
+    } else if (f$type == "ordinal") {
+      shinyWidgets::sliderTextInput(
+        paste0(prefix, "_meta_", f$id, "_range"), label = NULL,
+        choices = f$choices, selected = c(f$choices[1], f$choices[length(f$choices)]),
+        grid = TRUE
+      )
+      
     } else {
       shiny::tagList(
         shiny::checkboxGroupInput(
           paste0(prefix, "_meta_", f$id, "_sel"), label = NULL,
           choices = f$choices, selected = character(0)
         ),
-        shiny::plotOutput(paste0(prefix, "_hist_", f$id), height = "150px")
+        shiny::plotOutput(paste0(prefix, "_hist_", f$id), height = "170px")
       )
     }
     bslib::accordion_panel(title = f$label, body)
@@ -490,10 +569,11 @@ build_metadata_accordion <- function(prefix, data) {
   do.call(bslib::accordion, c(list(id = paste0(prefix, "_metadata_accordion"), open = FALSE), panels))
 }
 
-# registers the renderPlot output for every categorical field's histogram
-# under a page's prefix. call once per page (outside any observer) that
-# includes a metadata accordion. shows the OVERALL distribution across all
-# donors, not a live-filtered one.
+# registers the renderPlot output for every categorical ("select") field's
+# histogram under a page's prefix. call once per page (outside any
+# observer) that includes a metadata accordion. shows the OVERALL
+# distribution across all donors, not a live-filtered one. no y-axis (counts
+# are labeled directly on top of each bar instead), x-axis labels angled.
 register_metadata_histograms <- function(output, prefix, data) {
   for (f in metadata_fields) {
     if (f$type != "select") next
@@ -501,7 +581,17 @@ register_metadata_histograms <- function(output, prefix, data) {
       fld <- f
       output[[paste0(prefix, "_hist_", fld$id)]] <- shiny::renderPlot({
         counts <- table(data[[fld$id]])
-        barplot(counts, main = NULL, col = "#7952b3", border = NA, las = 2, cex.names = 0.8)
+        graphics::par(mar = c(6, 1, 2, 1))
+        bp <- graphics::barplot(
+          counts, col = metadata_chart_color, border = NA,
+          yaxt = "n", xaxt = "n", ylim = c(0, max(counts) * 1.15)
+        )
+        graphics::text(x = bp, y = counts, labels = counts, pos = 3, cex = 0.8, xpd = TRUE)
+        usr <- graphics::par("usr")
+        graphics::text(
+          x = bp, y = usr[3] - 0.04 * (usr[4] - usr[3]), labels = names(counts),
+          srt = 45, adj = 1, xpd = TRUE, cex = 0.8
+        )
       })
     })
   }
@@ -535,23 +625,23 @@ render_viewer_grid_ui <- function(entries, label_field = c("stain", "donor", "re
 render_annotation_master_ui <- function(entries) {
   if (length(entries) == 0) return(NULL)
   
-  all_labels <- character(0)
-  for (e in entries) {
-    if (length(e$slot$annotation_files) > 0) {
-      all_labels <- c(all_labels, vapply(e$slot$annotation_files, function(f) f$name, character(1)))
-    }
-  }
-  all_labels <- sort(unique(all_labels))
+  all_labels <- get_unique_annotation_labels(entries)
   if (length(all_labels) == 0) return(NULL)
+  
+  color_map <- build_annotation_color_map(all_labels)
   
   shiny::tagList(
     shiny::strong("Annotations:"),
     shiny::div(
-      style = "display:flex; flex-wrap:wrap; gap:14px; margin-top:6px;",
+      style = "display:flex; flex-wrap:wrap; gap:40px; margin-top:12px;",
       lapply(all_labels, function(lab) {
         shiny::tags$label(
           shiny::tags$input(type = "checkbox", onclick = sprintf("toggleAnnotationLabel('%s', this.checked)", lab)),
-          paste0(" ", lab)
+          paste0(" ", lab),
+          shiny::tags$span(style = sprintf(
+            "display:inline-block; width:12px; height:12px; margin-left:6px; border-radius:2px; background:%s; vertical-align:middle;",
+            color_map[[lab]]
+          ))
         )
       })
     )
@@ -560,14 +650,29 @@ render_annotation_master_ui <- function(entries) {
 
 # builds the json-ready payload for the 'loadImages' custom message.
 # `show_overlay` (per-page checkbox) blanks overlayUrl entirely when off.
+#
+# EAGER annotation loading: every annotation file for every entry is parsed
+# right here (via the cache, so repeat loads of the same file are instant)
+# before the message is even sent — by the time an image appears, every one
+# of its layers' polygons is already sitting in the browser, so checking a
+# box just toggles visibility with no fetch delay. This trades a longer
+# wait at Load/Compare time for annotations that are always instantly ready
+# once the wait is over, which is the behavior actually being asked for
+# here — the cost is that a comparison spanning many donors/layers can take
+# a while up front, especially the first time each file is touched.
 build_images_payload <- function(entries, overlay_opacity, show_overlay = TRUE) {
+  color_map <- build_annotation_color_map(get_unique_annotation_labels(entries))
+  
   lapply(entries, function(e) {
     ann_files <- e$slot$annotation_files
     if (length(ann_files) > 0) {
       ann_files <- ann_files[order(vapply(ann_files, function(f) f$name, character(1)))]
     }
     groups <- lapply(ann_files, function(f) {
-      list(label = f$name, url = f$url, refWidth = e$slot$svs_width)
+      polys <- parse_halo_annotations_cached(f$url, e$slot$svs_width)
+      color <- color_map[[f$name]]
+      if (!is.null(color)) polys <- lapply(polys, function(p) { p$color <- color; p })
+      list(label = f$name, polygons = polys)
     })
     list(
       id               = safe_id(e$donor, e$stain, e$region),
@@ -577,4 +682,38 @@ build_images_payload <- function(entries, overlay_opacity, show_overlay = TRUE) 
       annotationGroups = groups
     )
   })
+}
+
+# shows one donor's metadata as separate cards, grouped per
+# metadata_display_groups (global.r) — edit that list to add/remove fields
+# or reorder/regroup them; this function just renders whatever it's given.
+render_donor_metadata_card <- function(donor_id) {
+  row <- donor_metadata[donor_metadata$donor == donor_id, , drop = FALSE]
+  if (nrow(row) == 0) return(NULL)
+  
+  field_by_id <- stats::setNames(metadata_fields, vapply(metadata_fields, function(f) f$id, character(1)))
+  
+  cards <- lapply(names(metadata_display_groups), function(group_name) {
+    field_ids <- metadata_display_groups[[group_name]]
+    bslib::card(
+      style = "min-width:220px;",
+      bslib::card_header(group_name),
+      bslib::card_body(
+        shiny::tagList(lapply(field_ids, function(fid) {
+          f <- field_by_id[[fid]]
+          if (is.null(f)) return(NULL)
+          shiny::tags$div(
+            style = "margin-bottom:6px;",
+            shiny::tags$strong(paste0(f$label, ": ")), as.character(row[[fid]])
+          )
+        }))
+      )
+    )
+  })
+  
+  shiny::tagList(
+    shiny::tags$hr(),
+    shiny::strong("Donor metadata:"),
+    shiny::div(style = "display:flex; flex-wrap:wrap; gap:16px; margin-top:8px;", cards)
+  )
 }
