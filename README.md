@@ -1,6 +1,21 @@
 # SEA-AD RShiny Neuropathology Viewer
 RShiny app to visualize neuropathology images
 
+## Local Use
+Clone the repository from GitHub.
+
+```sh
+git clone git@github.com:AllenInstitute/seaad-neuropath-shiny.git
+```
+
+Run the app in RStudio / using R. 
+```sh
+install.packages("shiny")
+library(shiny)
+setwd("<GitHub repo folder>")
+shiny::runApp("./basic_app")
+```
+
 ## Goals
 - Increased stain, region, donor comparison
 - Easy to maintain and update
