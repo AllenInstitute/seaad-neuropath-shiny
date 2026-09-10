@@ -10,6 +10,7 @@
 # already available by the time ui.R and server.R need them — no explicit
 # source() call required.
 # =============================================================================
+library(faq)
 
 # Returns the About tabPanel. Called once from ui.R, inside navbarPage(...).
 about_tab_ui <- function() {
@@ -42,6 +43,9 @@ about_tab_ui <- function() {
                src = "AI_medium_maroon_black.svg",
                style = "max-height:100px; margin-bottom:16px; border-radius:6px;margin-left:20px;"
              ),
+             br(),
+             h4("Frequently Asked Questions"),
+             faq::faq(data = df, elementId = "faq", height = "50%",faqtitle = ""),
            )
   )
 }
