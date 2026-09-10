@@ -2,9 +2,9 @@ library(dplyr)
 library(bslib)
 library(histoslider)
 library(httr)
-library(shinycssloaders)
+library(curl)
 library(khroma)
-library(shinyWidgets)
+library(shinyjs)
 
 source("R/functions.R")
 
@@ -18,10 +18,6 @@ source("R/functions.R")
 #   - "range"   fields: a histoslider over the raw numeric column. do NOT
 #     set min/max here — always derived from real data (derive_metadata_fields()),
 #     never guessed.
-#   - "ordinal" fields: categorical values with a meaningful order — declare
-#     `choices` IN ORDER (position 1..N is what gets filtered on via a
-#     histoslider). choices must always be given explicitly; there's no way
-#     to safely auto-derive a clinically-correct order from raw data.
 #   - "select"  fields: unordered categorical values, filtered via checkboxes.
 #     choices are OPTIONAL here — omit them to auto-derive from real data
 #     (new values then show up with no code change); if hardcoded, that list
@@ -36,17 +32,17 @@ metadata_fields <- list(
        choices = c("2/2", "2/3", "2/4", "3/3", "3/4", "4/4"), csv_column = "APOE genotype"),
   list(id = "cog_status",      label = "Cognitive status", type = "select",
        choices = c("Dementia", "No dementia"), csv_column = "Cognitive status"),
-  list(id = "adnc",            label = "ADNC",             type = "ordinal",
+  list(id = "adnc",            label = "ADNC",             type = "select",
        choices = c("Not AD", "Low", "Intermediate", "High"), csv_column = "ADNC"),
-  list(id = "thal_phase",      label = "Thal phase",       type = "ordinal",
+  list(id = "thal_phase",      label = "Thal phase",       type = "select",
        choices = as.character(0:5), csv_column = "Thal phase"),
-  list(id = "braak_stage",     label = "Braak stage",      type = "ordinal",
+  list(id = "braak_stage",     label = "Braak stage",      type = "select",
        choices = c("0", "I", "II", "III", "IV", "V", "VI"), csv_column = "Braak stage"),
-  list(id = "cerad_score",     label = "CERAD score",      type = "ordinal",
+  list(id = "cerad_score",     label = "CERAD score",      type = "select",
        choices = c("Absent", "Sparse", "Moderate", "Frequent"), csv_column = "CERAD score"),
   list(id = "years_education", label = "Years of education", type = "range",
        csv_column = "Years of education (years)"),
-  list(id = "cps",             label = "Continuous Pseudo-progression Score (CPS)", type = "range",
+  list(id = "cps",             label = "CPS", type = "range",
        csv_column = "Continuous Pseudo-progression Score")
 )
 
@@ -70,6 +66,11 @@ metadata_fields <- derive_metadata_fields(metadata_fields, donor_metadata)
 # any donor/region/stain appearing in this csv is picked up automatically,
 # no code changes needed elsewhere.
 # ---------------------------------------------------------------------------
+# how long (seconds) to wait per annotation-file request before giving up —
+# increase this if you see "could not fetch ... Timeout was reached"
+# warnings at startup/load time; the S3 endpoint can be slow under load.
+annotation_fetch_timeout_sec <- 60
+
 manifest_csv_path <- "ins/260909_manifest_fill.csv"
 
 csv_entries <- tryCatch(read_manifest_csv_entries(manifest_csv_path), error = function(e) {
@@ -94,10 +95,13 @@ metadata_display_groups <- list(
   "Pathology"   = c("cog_status", "adnc", "thal_phase", "braak_stage", "cerad_score", "cps")
 )
 
+# shared theme — passed to navbarPage(theme = ...) in ui.R. defined here
+# (rather than at the bottom) since metadata_chart_color, below, needs it.
+app_theme <- bslib::bs_theme(bootswatch = "lux")
+
 # shared color used for BOTH histoslider bars and the categorical histogram
-# bars (register_metadata_histograms()), so all metadata charts look
-# consistent. change this one value to restyle every metadata chart at once.
-metadata_chart_color <- "black"
+# bars (register_metadata_histograms())
+metadata_chart_color <- "#7952b3"
 
 # ---------------------------------------------------------------------------
 # annotation colors are chosen automatically per load — see
@@ -107,6 +111,3 @@ metadata_chart_color <- "black"
 # and assigns one color per label. nothing to configure here unless you want
 # to swap the palette scheme itself.
 # ---------------------------------------------------------------------------
-
-# shared theme — passed to navbarPage(theme = ...) in ui.R.
-app_theme <- bslib::bs_theme(bootswatch = "lux")

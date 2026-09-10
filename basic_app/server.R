@@ -22,6 +22,37 @@ function(input, output, session) {
   sregion_entries_rv <- reactiveVal(list())
   
   # ===========================================================================
+  # shinyjs: keep each page's Load/Compare button disabled until its required
+  # selections are actually made, so it's simply not possible to click Load
+  # with an incomplete selection instead of failing after the fact.
+  # ===========================================================================
+  
+  observe({
+    valid <- is_selected(input$home_donor) && is_selected(input$home_region) && is_selected(input$home_stain)
+    shinyjs::toggleState("home_load_btn", condition = valid)
+  })
+  
+  observe({
+    valid <- is_selected(input$dstain_donor) && is_selected(input$dstain_region) &&
+      length(input$dstain_stains) > 0
+    shinyjs::toggleState("dstain_load_btn", condition = valid)
+  })
+  
+  observe({
+    valid <- is_selected(input$sdonor_stain) && is_selected(input$sdonor_region)
+    if (identical(input$sdonor_subset_mode, "manual")) {
+      valid <- valid && length(input$sdonor_donors_manual) > 0
+    }
+    shinyjs::toggleState("sdonor_load_btn", condition = valid)
+  })
+  
+  observe({
+    valid <- is_selected(input$sregion_donor) && is_selected(input$sregion_stain) &&
+      length(input$sregion_regions) > 0
+    shinyjs::toggleState("sregion_load_btn", condition = valid)
+  })
+  
+  # ===========================================================================
   # home — single donor/region/stain
   # ===========================================================================
   
@@ -51,7 +82,7 @@ function(input, output, session) {
                       choices = with_placeholder(get_stain_choices_for_donor_region(input$home_donor, input$home_region)))
   }, ignoreInit = TRUE)
   
-  output$home_annotation_ui <- renderUI({ render_annotation_master_ui(home_entries_rv()) })
+  output$home_annotation_ui <- renderUI({ render_annotation_master_ui(home_entries_rv(), id_prefix = "home") })
   output$home_viewer_grid   <- renderUI({ render_viewer_grid_ui(home_entries_rv(), label_field = "stain") })
   output$home_donor_metadata <- renderUI({
     entries <- home_entries_rv()
@@ -68,13 +99,16 @@ function(input, output, session) {
     entries <- list(list(donor = input$home_donor, region = input$home_region, stain = input$home_stain, slot = slot))
     home_entries_rv(entries)
     
-    # all of this entry's annotation files get parsed synchronously inside
-    # build_images_payload() now (see its comment for why), so this can take
-    # real time — show a page spinner for the actual duration.
-    shinycssloaders::showPageSpinner(type = 5)
-    on.exit(shinycssloaders::hidePageSpinner(), add = TRUE)
-    
-    images <- build_images_payload(entries, input$home_overlay_opacity, input$home_show_overlay)
+    # annotation files for this entry are fetched CONCURRENTLY inside
+    # build_images_payload() (see its comment), with live progress reported
+    # here via a determinate progress bar — so it's clear this is actually
+    # working and roughly how much is left, rather than an indefinite spinner.
+    images <- shiny::withProgress(message = "Loading image...", value = 0, {
+      build_images_payload(entries, input$home_overlay_opacity, input$home_show_overlay,
+                           progress_callback = function(done, total) {
+                             shiny::setProgress(value = done / total, detail = sprintf("Fetching annotations: %d of %d", done, total))
+                           })
+    })
     session$onFlushed(function() session$sendCustomMessage("loadImages", list(images = images)), once = TRUE)
   })
   
@@ -112,7 +146,7 @@ function(input, output, session) {
     constraint_card("Donor" = e1$donor, "Region" = prettify_region(e1$region))
   })
   
-  output$dstain_annotation_ui <- renderUI({ render_annotation_master_ui(dstain_entries_rv()) })
+  output$dstain_annotation_ui <- renderUI({ render_annotation_master_ui(dstain_entries_rv(), id_prefix = "dstain") })
   output$dstain_viewer_grid   <- renderUI({ render_viewer_grid_ui(dstain_entries_rv(), label_field = "stain") })
   
   observeEvent(input$dstain_load_btn, {
@@ -127,14 +161,15 @@ function(input, output, session) {
     entries <- Filter(Negate(is.null), entries)
     shiny::validate(shiny::need(length(entries) > 0, "No valid images found for this donor + region + stain selection."))
     
-    entries <- maybe_skip_annotations(entries, input$dstain_fetch_annotations)
     entries <- sort_entries_by(entries, "stain")
     dstain_entries_rv(entries)
     
-    shinycssloaders::showPageSpinner(type = 5)
-    on.exit(shinycssloaders::hidePageSpinner(), add = TRUE)
-    
-    images <- build_images_payload(entries, input$dstain_overlay_opacity, input$dstain_show_overlay)
+    images <- shiny::withProgress(message = "Loading images...", value = 0, {
+      build_images_payload(entries, input$dstain_overlay_opacity, input$dstain_show_overlay,
+                           progress_callback = function(done, total) {
+                             shiny::setProgress(value = done / total, detail = sprintf("Fetching annotations: %d of %d", done, total))
+                           })
+    })
     session$onFlushed(function() session$sendCustomMessage("loadImages", list(images = images)), once = TRUE)
   })
   
@@ -164,8 +199,8 @@ function(input, output, session) {
     constraint_card("Stain" = e1$stain, "Region" = prettify_region(e1$region))
   })
   
-  output$sdonor_annotation_ui <- renderUI({ render_annotation_master_ui(sdonor_entries_rv()) })
-  output$sdonor_viewer_grid   <- renderUI({ render_viewer_grid_ui(sdonor_entries_rv(), label_field = "donor") })
+  output$sdonor_annotation_ui <- renderUI({ render_annotation_master_ui(sdonor_entries_rv(), id_prefix = "sdonor") })
+  output$sdonor_viewer_grid   <- renderUI({ render_viewer_grid_ui(sdonor_entries_rv(), label_field = "donor", show_donor_info = TRUE) })
   
   observeEvent(input$sdonor_load_btn, {
     req(input$sdonor_stain, input$sdonor_region, nzchar(input$sdonor_stain), nzchar(input$sdonor_region))
@@ -184,14 +219,15 @@ function(input, output, session) {
     entries <- Filter(Negate(is.null), entries)
     shiny::validate(shiny::need(length(entries) > 0, "No donors have a valid image for this stain + region selection."))
     
-    entries <- maybe_skip_annotations(entries, input$sdonor_fetch_annotations)
     entries <- sort_entries_by(entries, "donor")
     sdonor_entries_rv(entries)
     
-    shinycssloaders::showPageSpinner(type = 5)
-    on.exit(shinycssloaders::hidePageSpinner(), add = TRUE)
-    
-    images <- build_images_payload(entries, input$sdonor_overlay_opacity, input$sdonor_show_overlay)
+    images <- shiny::withProgress(message = "Loading images...", value = 0, {
+      build_images_payload(entries, input$sdonor_overlay_opacity, input$sdonor_show_overlay,
+                           progress_callback = function(done, total) {
+                             shiny::setProgress(value = done / total, detail = sprintf("Fetching annotations: %d of %d", done, total))
+                           })
+    })
     session$onFlushed(function() session$sendCustomMessage("loadImages", list(images = images)), once = TRUE)
   })
   
@@ -230,7 +266,7 @@ function(input, output, session) {
     constraint_card("Donor" = e1$donor, "Stain" = e1$stain)
   })
   
-  output$sregion_annotation_ui <- renderUI({ render_annotation_master_ui(sregion_entries_rv()) })
+  output$sregion_annotation_ui <- renderUI({ render_annotation_master_ui(sregion_entries_rv(), id_prefix = "sregion") })
   output$sregion_viewer_grid   <- renderUI({ render_viewer_grid_ui(sregion_entries_rv(), label_field = "region") })
   
   observeEvent(input$sregion_load_btn, {
@@ -245,14 +281,15 @@ function(input, output, session) {
     entries <- Filter(Negate(is.null), entries)
     shiny::validate(shiny::need(length(entries) > 0, "No valid images found for the selected regions."))
     
-    entries <- maybe_skip_annotations(entries, input$sregion_fetch_annotations)
     entries <- sort_entries_by(entries, "region")
     sregion_entries_rv(entries)
     
-    shinycssloaders::showPageSpinner(type = 5)
-    on.exit(shinycssloaders::hidePageSpinner(), add = TRUE)
-    
-    images <- build_images_payload(entries, input$sregion_overlay_opacity, input$sregion_show_overlay)
+    images <- shiny::withProgress(message = "Loading images...", value = 0, {
+      build_images_payload(entries, input$sregion_overlay_opacity, input$sregion_show_overlay,
+                           progress_callback = function(done, total) {
+                             shiny::setProgress(value = done / total, detail = sprintf("Fetching annotations: %d of %d", done, total))
+                           })
+    })
     session$onFlushed(function() session$sendCustomMessage("loadImages", list(images = images)), once = TRUE)
   })
   
@@ -284,7 +321,6 @@ function(input, output, session) {
     updateSelectInput(session, "dstain_region", choices = with_placeholder(character(0)))
     updateSelectInput(session, "dstain_stains", choices = character(0), selected = character(0))
     updateCheckboxInput(session, "dstain_show_overlay", value = FALSE)
-    updateCheckboxInput(session, "dstain_fetch_annotations", value = FALSE)
     updateSliderInput(session, "dstain_overlay_opacity", value = 0)
     
     sdonor_entries_rv(list())
@@ -293,7 +329,6 @@ function(input, output, session) {
     updateRadioButtons(session, "sdonor_subset_mode", selected = "all")
     updateSelectInput(session, "sdonor_donors_manual", choices = donor_choices, selected = character(0))
     updateCheckboxInput(session, "sdonor_show_overlay", value = FALSE)
-    updateCheckboxInput(session, "sdonor_fetch_annotations", value = FALSE)
     updateSliderInput(session, "sdonor_overlay_opacity", value = 0)
     
     sregion_entries_rv(list())
@@ -302,7 +337,6 @@ function(input, output, session) {
     updateSelectInput(session, "sregion_stain", choices = with_placeholder(character(0)))
     updateSelectInput(session, "sregion_regions", choices = character(0), selected = character(0))
     updateCheckboxInput(session, "sregion_show_overlay", value = FALSE)
-    updateCheckboxInput(session, "sregion_fetch_annotations", value = FALSE)
     updateSliderInput(session, "sregion_overlay_opacity", value = 0)
   }, ignoreInit = TRUE)
 }

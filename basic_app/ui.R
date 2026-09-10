@@ -1,29 +1,27 @@
 library(shiny)
 library(bslib)
-library(shinycssloaders)
-
-# checkbox + hover tooltip, reused on every comparison page except Home
-# (fetching annotations for a single image is cheap enough to always do).
-# uses bslib::tooltip() rather than the shinytip package — shinytip's exact
-# function name/API couldn't be confirmed against a stable release (its own
-# author still lists it as "WIP"), whereas bslib::tooltip() is documented
-# and already a dependency here.
-fetch_annotations_control <- function(id) {
-  tags$div(
-    style = "display:flex; align-items:center; gap:6px;",
-    checkboxInput(id, "Fetch annotations", value = FALSE),
-    bslib::tooltip(
-      icon("circle-info", style = "color:#888; cursor:help;"),
-      "Fetching annotations increases load time significantly based on image count.",
-      placement = "right"
-    )
-  )
-}
+library(shinyjs)
 
 tagList(
   
+  useShinyjs(),
+  
   tags$head(
-    tags$script(src = "https://cdn.jsdelivr.net/npm/openseadragon@4/build/openseadragon/openseadragon.min.js")
+    tags$script(src = "https://cdn.jsdelivr.net/npm/openseadragon@4/build/openseadragon/openseadragon.min.js"),
+    tags$style(HTML("
+      /* wider popovers so donor-metadata content (render_donor_metadata_list)
+         doesn't get cut off by Bootstrap's fairly narrow default max-width */
+      .popover { max-width: 340px; }
+
+      /* disabled Load/Compare buttons: a plain light gray instead of
+         Bootstrap's default washed-out-primary look */
+      .btn:disabled, .btn.disabled {
+        background-color: #e0e0e0 !important;
+        border-color: #d0d0d0 !important;
+        color: #999999 !important;
+        opacity: 1 !important;
+      }
+    "))
   ),
   
   navbarPage(
@@ -86,7 +84,6 @@ tagList(
                    condition = "input.dstain_show_overlay",
                    sliderInput("dstain_overlay_opacity", "Overlay opacity", min = 0, max = 1, value = 0, step = 0.05)
                  ),
-                 fetch_annotations_control("dstain_fetch_annotations"),
                  actionButton("dstain_load_btn", "Load / Compare", class = "btn-primary")
                ),
                mainPanel(
@@ -129,7 +126,6 @@ tagList(
                    condition = "input.sdonor_show_overlay",
                    sliderInput("sdonor_overlay_opacity", "Overlay opacity", min = 0, max = 1, value = 0, step = 0.05)
                  ),
-                 fetch_annotations_control("sdonor_fetch_annotations"),
                  actionButton("sdonor_load_btn", "Load / Compare", class = "btn-primary")
                ),
                mainPanel(
@@ -165,7 +161,6 @@ tagList(
                    condition = "input.sregion_show_overlay",
                    sliderInput("sregion_overlay_opacity", "Overlay opacity", min = 0, max = 1, value = 0, step = 0.05)
                  ),
-                 fetch_annotations_control("sregion_fetch_annotations"),
                  actionButton("sregion_load_btn", "Load / Compare", class = "btn-primary")
                ),
                mainPanel(

@@ -4,6 +4,11 @@
 
 library(dplyr)
 
+# true if a single-select input actually has a value chosen (not NULL and
+# not the blank placeholder from with_placeholder()). used to gate the
+# Load/Compare buttons via shinyjs — see server.r.
+is_selected <- function(x) !is.null(x) && length(x) == 1 && nzchar(x)
+
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
 # ---------------------------------------------------------------------------
@@ -238,15 +243,6 @@ get_donors_with_stain_region <- function(stain, region) {
   sort(donors[vapply(donors, function(d) !is.null(donor_manifest[[d]][[region]][[stain]]), logical(1))])
 }
 
-# when the "Fetch annotations" checkbox is off, strips each entry's
-# annotation_files so nothing gets parsed and no annotation checklist shows
-# up for that load — used by the three comparison pages (Home always
-# fetches, since a single image is cheap regardless).
-maybe_skip_annotations <- function(entries, fetch_annotations) {
-  if (isTRUE(fetch_annotations)) return(entries)
-  lapply(entries, function(e) { e$slot$annotation_files <- list(); e })
-}
-
 # sorts a set of loaded entries alphabetically by whichever field varies on
 # the page they're shown on (stain/donor/region) — used so images always
 # appear in a predictable left-to-right/top-to-bottom order.
@@ -390,6 +386,70 @@ parse_halo_annotations_cached <- function(url, ref_width) {
   result
 }
 
+# fetches+parses many annotation files CONCURRENTLY (all requests in flight
+# at once via curl's multi-handle interface, capped at `max_concurrent`),
+# instead of one at a time — since the actual bottleneck here is network
+# latency per file, not parsing, this is the main lever for making a large
+# comparison load faster. results are written straight into
+# .annotation_cache as each one finishes, so parse_halo_annotations_cached()
+# calls made afterward are all instant cache hits.
+#
+# `progress_callback(done, total)`, if given, is called after EVERY file
+# completes (success or failure) — not just once at the end — so callers
+# can show live, incrementing progress instead of an indefinite spinner
+# that gives no sense of whether anything is actually happening.
+#
+# `file_specs` is a list of list(url=, ref_width=) — duplicates (same url +
+# ref_width appearing across multiple entries) are only fetched once.
+fetch_annotations_concurrently <- function(file_specs, progress_callback = NULL, max_concurrent = 10) {
+  keyed <- lapply(file_specs, function(s) {
+    s$cache_key <- paste(s$url, s$ref_width, sep = "::")
+    s
+  })
+  keyed <- keyed[!duplicated(vapply(keyed, function(s) s$cache_key, character(1)))]
+  
+  to_fetch <- Filter(function(s) !exists(s$cache_key, envir = .annotation_cache, inherits = FALSE), keyed)
+  
+  total <- length(keyed)
+  done_count <- total - length(to_fetch)
+  if (!is.null(progress_callback) && done_count > 0) progress_callback(done_count, total)
+  
+  if (length(to_fetch) > 0) {
+    pool <- curl::new_pool(total_con = max_concurrent)
+    
+    lapply(to_fetch, function(spec) {
+      # explicit, generous timeout (annotation_fetch_timeout_sec, global.r) —
+      # curl_fetch_multi()'s default handle apparently times out around 10s,
+      # too short for this endpoint under load.
+      h <- curl::new_handle(timeout = annotation_fetch_timeout_sec, connecttimeout = 30)
+      curl::curl_fetch_multi(
+        spec$url,
+        done = function(resp) {
+          polys <- tryCatch(parse_halo_annotations(resp$content, spec$ref_width), error = function(e) {
+            warning("could not parse ", spec$url, ": ", e$message)
+            list()
+          })
+          assign(spec$cache_key, polys, envir = .annotation_cache)
+          done_count <<- done_count + 1
+          if (!is.null(progress_callback)) progress_callback(done_count, total)
+        },
+        fail = function(err) {
+          warning("could not fetch ", spec$url, ": ", err)
+          assign(spec$cache_key, list(), envir = .annotation_cache)
+          done_count <<- done_count + 1
+          if (!is.null(progress_callback)) progress_callback(done_count, total)
+        },
+        pool = pool,
+        handle = h
+      )
+    })
+    
+    curl::multi_run(pool = pool)
+  }
+  
+  invisible(NULL)
+}
+
 # ---------------------------------------------------------------------------
 # donor metadata — fully spec-driven by metadata_fields (defined in
 # global.r). Each field declares its own `csv_column` (the exact header text
@@ -484,13 +544,13 @@ histoslider_range <- function(val) {
 # reads the meta_* inputs for a given page prefix and filters donor_metadata
 # down with dplyr. returns the vector of matching donor ids.
 #
-# type "range"   -> a [min,max] filter on the raw numeric column.
-# type "ordinal" -> categorical values with a meaningful order (declared via
-#                   `choices`, in order), filtered via a sliderTextInput —
-#                   input$... is a length-2 character vector of the selected
-#                   labels themselves (not positions), so this just expands
-#                   that into the corresponding subset of `choices`.
-# type "select"  -> an unordered %in% filter from the checkbox group.
+# type "range"  -> a [min,max] filter on the raw numeric column.
+# type "select" -> an unordered %in% filter from the checkbox group.
+# reads the meta_* inputs for a given page prefix and filters donor_metadata
+# down with dplyr. returns the vector of matching donor ids.
+#
+# type "range"  -> a [min,max] filter from the histoslider's dragged range.
+# type "select" -> an unordered %in% filter from the checkbox group.
 filter_donors_by_metadata <- function(metadata, input, prefix) {
   df <- metadata
   for (f in metadata_fields) {
@@ -498,14 +558,6 @@ filter_donors_by_metadata <- function(metadata, input, prefix) {
       val <- histoslider_range(input[[paste0(prefix, "_meta_", f$id, "_range")]])
       if (!is.null(val)) {
         df <- df %>% dplyr::filter(.data[[f$id]] >= val[1], .data[[f$id]] <= val[2])
-      }
-    } else if (f$type == "ordinal") {
-      val <- input[[paste0(prefix, "_meta_", f$id, "_range")]]
-      if (!is.null(val) && length(val) == 2) {
-        lo <- min(match(val, f$choices), na.rm = TRUE)
-        hi <- max(match(val, f$choices), na.rm = TRUE)
-        allowed <- f$choices[lo:hi]
-        df <- df %>% dplyr::filter(.data[[f$id]] %in% allowed)
       }
     } else {
       val <- input[[paste0(prefix, "_meta_", f$id, "_sel")]]
@@ -524,36 +576,34 @@ filter_donors_by_metadata <- function(metadata, input, prefix) {
 # doesn't match, the CSS override in ui.R's <style> block is the more
 # reliable lever (target whatever class the rendered bars actually use —
 # inspect one with your browser's dev tools to confirm the selector).
-build_histoslider <- function(id, values) {
-  tryCatch(
-    histoslider::input_histoslider(id, NULL, values, options = list(color = metadata_chart_color)),
-    error = function(e) histoslider::input_histoslider(id, NULL, values)
+# confirmed against the actual react component source (samhogg/histoslider
+# Histoslider.js) and the R wrapper's docs (input_histoslider.Rd, which
+# explicitly documents `options` as a pass-through to that component's
+# props): the real color props are `selectedColor`/`unselectedColor`, not
+# `color` (an earlier guess that silently did nothing). selectedColor tints
+# the bars within the dragged range, unselectedColor tints the rest — using
+# our border/fill purples for a two-tone look consistent with the plain
+# categorical histograms elsewhere.
+build_histoslider <- function(id, values, breaks = NULL) {
+  histoslider::input_histoslider(
+    id, NULL, values, breaks = breaks,
+    options = list(selectedColor = metadata_chart_border_color, unselectedColor = metadata_chart_color)
   )
 }
 
 # one bslib accordion_panel per metadata field:
-#   "range"   -> a histoslider (histogram + range filter combined).
-#   "ordinal" -> ordered categorical values, via shinyWidgets::sliderTextInput
-#                (NOT histoslider — histoslider only supports numeric/date/
-#                datetime axes, so it can't show category labels as ticks;
-#                sliderTextInput natively shows every one of `choices` as a
-#                labeled tick on the track, which is what was asked for here,
-#                at the cost of no histogram-bar visualization for this type).
-#   "select"  -> a plain checkboxGroupInput (label immediately next to each
-#                checkbox) plus a separate histogram registered server-side
-#                via register_metadata_histograms().
+#   "range"  -> a histoslider (histogram + range filter combined).
+#   "select" -> a plain checkboxGroupInput (label immediately next to each
+#               checkbox) plus a separate histogram registered server-side
+#               via register_metadata_histograms().
 # widget ids are prefixed per page.
 build_metadata_accordion <- function(prefix, data) {
   panels <- lapply(metadata_fields, function(f) {
     body <- if (f$type == "range") {
-      build_histoslider(paste0(prefix, "_meta_", f$id, "_range"), data[[f$id]])
-      
-    } else if (f$type == "ordinal") {
-      shinyWidgets::sliderTextInput(
-        paste0(prefix, "_meta_", f$id, "_range"), label = NULL,
-        choices = f$choices, selected = c(f$choices[1], f$choices[length(f$choices)]),
-        grid = TRUE
-      )
+      # breaks at every integer so each bin has width 1 — gives a much finer
+      # histogram than histoslider's default automatic binning.
+      breaks <- seq(floor(f$min), ceiling(f$max), by = 1)
+      build_histoslider(paste0(prefix, "_meta_", f$id, "_range"), data[[f$id]], breaks = breaks)
       
     } else {
       shiny::tagList(
@@ -573,24 +623,27 @@ build_metadata_accordion <- function(prefix, data) {
 # histogram under a page's prefix. call once per page (outside any
 # observer) that includes a metadata accordion. shows the OVERALL
 # distribution across all donors, not a live-filtered one. no y-axis (counts
-# are labeled directly on top of each bar instead), x-axis labels angled.
+# are labeled directly on top of each bar instead), bars ordered to match
+# metadata_fields' declared choices, x-axis labels horizontal.
 register_metadata_histograms <- function(output, prefix, data) {
   for (f in metadata_fields) {
     if (f$type != "select") next
     local({
       fld <- f
       output[[paste0(prefix, "_hist_", fld$id)]] <- shiny::renderPlot({
-        counts <- table(data[[fld$id]])
-        graphics::par(mar = c(6, 1, 2, 1))
+        # factor levels = fld$choices, so bar order always matches the
+        # order declared in metadata_fields (global.r), not table()'s
+        # default alphabetical ordering.
+        counts <- table(factor(data[[fld$id]], levels = fld$choices))
+        graphics::par(mar = c(4, 1, 2, 1))
         bp <- graphics::barplot(
-          counts, col = metadata_chart_color, border = NA,
+          counts, col = metadata_chart_color, border = metadata_chart_border_color,
           yaxt = "n", xaxt = "n", ylim = c(0, max(counts) * 1.15)
         )
-        graphics::text(x = bp, y = counts, labels = counts, pos = 3, cex = 0.8, xpd = TRUE)
-        usr <- graphics::par("usr")
+        graphics::text(x = bp, y = counts, labels = counts, pos = 3, cex = 1.1, xpd = TRUE)
         graphics::text(
-          x = bp, y = usr[3] - 0.04 * (usr[4] - usr[3]), labels = names(counts),
-          srt = 45, adj = 1, xpd = TRUE, cex = 0.8
+          x = bp, y = graphics::par("usr")[3], labels = names(counts),
+          srt = 0, adj = c(0.5, 1.3), xpd = TRUE, cex = 1.1
         )
       })
     })
@@ -603,16 +656,31 @@ register_metadata_histograms <- function(output, prefix, data) {
 # other two are fixed and shown once in a constraint card instead.
 # ---------------------------------------------------------------------------
 
-render_viewer_grid_ui <- function(entries, label_field = c("stain", "donor", "region")) {
+render_viewer_grid_ui <- function(entries, label_field = c("stain", "donor", "region"), show_donor_info = FALSE) {
   label_field <- match.arg(label_field)
   if (length(entries) == 0) return(NULL)  # blank until something is actually loaded
   col_width <- if (length(entries) == 1) 12 else 6
   shiny::tagList(shiny::fluidRow(lapply(entries, function(e) {
     cid   <- paste0("osd-", safe_id(e$donor, e$stain, e$region))
     label <- if (label_field == "region") prettify_region(e$region) else e[[label_field]]
+    
+    heading <- if (show_donor_info && label_field == "donor") {
+      shiny::tags$div(
+        style = "display:flex; align-items:center; gap:6px;",
+        shiny::h5(style = "margin:0;", label),
+        bslib::popover(
+          shiny::tags$span(shiny::icon("circle-info"), style = "color:#888; cursor:pointer;"),
+          title = paste("Donor", label),
+          render_donor_metadata_list(e$donor)
+        )
+      )
+    } else {
+      shiny::h5(label)
+    }
+    
     shiny::column(
       width = col_width,
-      shiny::h5(label),
+      heading,
       shiny::tags$div(
         id = cid,
         style = "width:100%; height:450px; background:#000; border:1px solid #ccc; position:relative; margin-bottom:6px;"
@@ -622,7 +690,7 @@ render_viewer_grid_ui <- function(entries, label_field = c("stain", "donor", "re
   })))
 }
 
-render_annotation_master_ui <- function(entries) {
+render_annotation_master_ui <- function(entries, id_prefix = "ann") {
   if (length(entries) == 0) return(NULL)
   
   all_labels <- get_unique_annotation_labels(entries)
@@ -635,11 +703,26 @@ render_annotation_master_ui <- function(entries) {
     shiny::div(
       style = "display:flex; flex-wrap:wrap; gap:40px; margin-top:12px;",
       lapply(all_labels, function(lab) {
-        shiny::tags$label(
-          shiny::tags$input(type = "checkbox", onclick = sprintf("toggleAnnotationLabel('%s', this.checked)", lab)),
-          paste0(" ", lab),
+        # id_prefix keeps ids unique across pages — all four pages' checklists
+        # coexist in the DOM at once (navbarPage renders every tab up front),
+        # so two pages both showing a "Layer1" label would otherwise collide.
+        cb_id <- paste0(id_prefix, "_toggle_", gsub("[^A-Za-z0-9]+", "_", lab))
+        # a plain "form-check" div — the same Bootstrap classes bslib's own
+        # checkboxInput() renders under the hood — so this looks identical
+        # to every other checkbox in the app, even though (unlike a real
+        # checkboxInput) it's purely client-side: toggling annotation
+        # visibility doesn't need a server round-trip at all.
+        shiny::div(
+          class = "form-check",
+          style = "display:flex; align-items:center; gap:6px;",
+          shiny::tags$input(
+            class = "form-check-input", type = "checkbox", id = cb_id,
+            style = "margin:0;",
+            onclick = sprintf("toggleAnnotationLabel('%s', this.checked)", lab)
+          ),
+          shiny::tags$label(class = "form-check-label", `for` = cb_id, style = "margin:0;", lab),
           shiny::tags$span(style = sprintf(
-            "display:inline-block; width:12px; height:12px; margin-left:6px; border-radius:2px; background:%s; vertical-align:middle;",
+            "display:inline-block; width:18px; height:18px; border-radius:3px; background:%s; flex-shrink:0;",
             color_map[[lab]]
           ))
         )
@@ -660,8 +743,24 @@ render_annotation_master_ui <- function(entries) {
 # once the wait is over, which is the behavior actually being asked for
 # here — the cost is that a comparison spanning many donors/layers can take
 # a while up front, especially the first time each file is touched.
-build_images_payload <- function(entries, overlay_opacity, show_overlay = TRUE) {
+build_images_payload <- function(entries, overlay_opacity, show_overlay = TRUE, progress_callback = NULL) {
   color_map <- build_annotation_color_map(get_unique_annotation_labels(entries))
+  
+  # gather every annotation file across ALL entries and fetch them
+  # CONCURRENTLY in one batch (see fetch_annotations_concurrently()) before
+  # doing anything else — this is what actually speeds up a large
+  # comparison's load time, since it's dominated by network latency per
+  # file, not by parsing. everything below this point is then just reading
+  # from the now-warm cache.
+  all_specs <- list()
+  for (e in entries) {
+    for (f in e$slot$annotation_files) {
+      all_specs[[length(all_specs) + 1]] <- list(url = f$url, ref_width = e$slot$svs_width)
+    }
+  }
+  if (length(all_specs) > 0) {
+    fetch_annotations_concurrently(all_specs, progress_callback = progress_callback)
+  }
   
   lapply(entries, function(e) {
     ann_files <- e$slot$annotation_files
@@ -669,7 +768,7 @@ build_images_payload <- function(entries, overlay_opacity, show_overlay = TRUE) 
       ann_files <- ann_files[order(vapply(ann_files, function(f) f$name, character(1)))]
     }
     groups <- lapply(ann_files, function(f) {
-      polys <- parse_halo_annotations_cached(f$url, e$slot$svs_width)
+      polys <- parse_halo_annotations_cached(f$url, e$slot$svs_width)  # cache hit — already fetched above
       color <- color_map[[f$name]]
       if (!is.null(color)) polys <- lapply(polys, function(p) { p$color <- color; p })
       list(label = f$name, polygons = polys)
@@ -682,6 +781,22 @@ build_images_payload <- function(entries, overlay_opacity, show_overlay = TRUE) 
       annotationGroups = groups
     )
   })
+}
+
+# compact list of ALL metadata_fields for one donor — used inside the info
+# popover next to each donor heading on the Compare Donors page. unlike
+# render_donor_metadata_card(), this has no heading/grouping of its own,
+# since the popover title already provides that context.
+render_donor_metadata_list <- function(donor_id) {
+  row <- donor_metadata[donor_metadata$donor == donor_id, , drop = FALSE]
+  if (nrow(row) == 0) return(shiny::p("No metadata found for this donor."))
+  
+  shiny::tagList(lapply(metadata_fields, function(f) {
+    shiny::tags$div(
+      style = "margin-bottom:4px; white-space:nowrap;",
+      shiny::tags$strong(paste0(f$label, ": ")), as.character(row[[f$id]])
+    )
+  }))
 }
 
 # shows one donor's metadata as separate cards, grouped per
