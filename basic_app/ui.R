@@ -25,7 +25,7 @@ tagList(
   ),
   
   navbarPage(
-    title = "SEA-AD Neuropathology Viewer",
+    title = "SEA-AD Viewer",
     theme = app_theme,
     id = "main_nav",  # lets server.R detect tab switches and reset every page
     
@@ -40,7 +40,7 @@ tagList(
                  checkboxInput("home_filter_donors", "Filter donors by metadata", value = FALSE),
                  conditionalPanel(
                    condition = "input.home_filter_donors",
-                   build_metadata_accordion("home", donor_metadata)
+                   uiOutput("home_metadata_accordion_ui")
                  ),
                  selectInput("home_region", "Region", choices = with_placeholder(character(0))),
                  selectInput("home_stain", "Stain", choices = with_placeholder(character(0))),
@@ -74,7 +74,7 @@ tagList(
                  checkboxInput("dstain_filter_donors", "Filter donors by metadata", value = FALSE),
                  conditionalPanel(
                    condition = "input.dstain_filter_donors",
-                   build_metadata_accordion("dstain", donor_metadata)
+                   uiOutput("dstain_metadata_accordion_ui")
                  ),
                  selectInput("dstain_region", "Region", choices = with_placeholder(character(0))),
                  selectInput("dstain_stains", "Stains to compare", choices = character(0), multiple = TRUE),
@@ -118,7 +118,7 @@ tagList(
                  ),
                  conditionalPanel(
                    condition = "input.sdonor_subset_mode == 'metadata'",
-                   build_metadata_accordion("sdonor", donor_metadata)
+                   uiOutput("sdonor_metadata_accordion_ui")
                  ),
                  tags$hr(),
                  checkboxInput("sdonor_show_overlay", "Show mask/analysis overlay", value = FALSE),
@@ -151,7 +151,7 @@ tagList(
                  checkboxInput("sregion_filter_donors", "Filter donors by metadata", value = FALSE),
                  conditionalPanel(
                    condition = "input.sregion_filter_donors",
-                   build_metadata_accordion("sregion", donor_metadata)
+                   uiOutput("sregion_metadata_accordion_ui")
                  ),
                  selectInput("sregion_stain", "Stain", choices = with_placeholder(character(0))),
                  selectInput("sregion_regions", "Regions to compare", choices = character(0), multiple = TRUE),

@@ -58,6 +58,15 @@ function(input, output, session) {
   
   register_metadata_histograms(output, "home", donor_metadata)
   
+  # built ONLY once the checkbox is actually turned on — this accordion
+  # (especially its QNP branch) can be large, and conditionalPanel alone
+  # doesn't defer rendering, it just CSS-hides already-shipped HTML. Building
+  # it eagerly for all four pages at startup was overwhelming the browser.
+  output$home_metadata_accordion_ui <- renderUI({
+    req(isTRUE(input$home_filter_donors))
+    precomputed_metadata_accordion_ui[["home"]]
+  })
+  
   # narrows the Donor dropdown to only donors matching the metadata filters
   # when the toggle is on; reads input$home_filter_donors AND (indirectly,
   # inside filter_donors_by_metadata) every home_meta_* input, so this
@@ -117,6 +126,11 @@ function(input, output, session) {
   # ===========================================================================
   
   register_metadata_histograms(output, "dstain", donor_metadata)
+  
+  output$dstain_metadata_accordion_ui <- renderUI({
+    req(isTRUE(input$dstain_filter_donors))
+    precomputed_metadata_accordion_ui[["dstain"]]
+  })
   
   observe({
     filtered <- if (isTRUE(input$dstain_filter_donors)) {
@@ -179,6 +193,11 @@ function(input, output, session) {
   
   register_metadata_histograms(output, "sdonor", donor_metadata)
   
+  output$sdonor_metadata_accordion_ui <- renderUI({
+    req(identical(input$sdonor_subset_mode, "metadata"))
+    precomputed_metadata_accordion_ui[["sdonor"]]
+  })
+  
   observeEvent(input$sdonor_stain, {
     req(input$sdonor_stain, nzchar(input$sdonor_stain))
     updateSelectInput(session, "sdonor_region", choices = with_placeholder(get_regions_for_stain(input$sdonor_stain)))
@@ -238,6 +257,10 @@ function(input, output, session) {
   
   register_metadata_histograms(output, "sregion", donor_metadata)
   
+  output$sregion_metadata_accordion_ui <- renderUI({
+    req(isTRUE(input$sregion_filter_donors))
+    precomputed_metadata_accordion_ui[["sregion"]]
+  })
   observe({
     filtered <- if (isTRUE(input$sregion_filter_donors)) {
       intersect(donor_choices, filter_donors_by_metadata(donor_metadata, input, "sregion"))

@@ -92,16 +92,127 @@ all_stains      <- get_all_stains()
 # ---------------------------------------------------------------------------
 metadata_display_groups <- list(
   "Demographic" = c("age_at_death", "sex", "apoe_genotype", "years_education"),
-  "Pathology"   = c("cog_status", "adnc", "thal_phase", "braak_stage", "cerad_score", "cps")
+  "Clinical"    = c("cog_status", "adnc", "thal_phase", "braak_stage", "cerad_score", "cps")
 )
+
+# ---------------------------------------------------------------------------
+# QNP (quantitative neuropathology) filters — structurally different from
+# metadata_fields above: each value is keyed by donor + region + subregion
+# (the same layer/subregion concept used for HALO annotations elsewhere),
+# not just donor. Read from a SEPARATE csv (qnp_metadata_csv_path). Every
+# field is numeric ("these are all numerical filters" per the request).
+#
+# `csv_column` values below are placeholders using your literal descriptions
+# — replace them with the exact header text once you have the real QNP csv,
+# since I don't have that file to confirm exact column naming/casing against.
+#
+# `stain_group` is only used for organizing the filter UI (one accordion
+# panel per stain) — it doesn't need to match anything in the csv itself.
+# ---------------------------------------------------------------------------
+qnp_fields <- list(
+  list(id = "avg_6e10_object_area",              label = "Average object area",
+       stain_group = "6E10", csv_column = "average 6e10 positive object area"),
+  list(id = "avg_6e10_object_median_diameter",    label = "Average object median diameter",
+       stain_group = "6E10", csv_column = "average 6e10 positive object median diameter"),
+  list(id = "n_6e10_objects_per_area",            label = "Number of objects per area",
+       stain_group = "6E10", csv_column = "number of 6e10 positive objects per area"),
+  list(id = "pct_6e10_dense_core_plaque_area",    label = "Percent dense core plaque area",
+       stain_group = "6E10", csv_column = "percent 6e10 dense core plaque area"),
+  list(id = "pct_6e10_diffuse_plaque_area",       label = "Percent diffuse plaque area",
+       stain_group = "6E10", csv_column = "percent 6e10 diffuse plaque area"),
+  list(id = "pct_6e10_fibrilar_plaque_area",      label = "Percent fibrilar plaque area",
+       stain_group = "6E10", csv_column = "percent 6e10 fibrilar plaque area"),
+  list(id = "pct_6e10_positive_area",             label = "Percent positive area",
+       stain_group = "6E10", csv_column = "percent 6e10 positive area"),
+  
+  list(id = "avg_iba1_process_area_per_cell",     label = "Average process area per cell",
+       stain_group = "Iba1", csv_column = "average Iba1 positive process area per cell"),
+  list(id = "avg_iba1_process_length_per_cell",   label = "Average process length per cell",
+       stain_group = "Iba1", csv_column = "average Iba1 positive process length per cell"),
+  list(id = "n_iba1_cells_per_area",              label = "Number of cells per area",
+       stain_group = "Iba1", csv_column = "number of Iba1 positive cells per area"),
+  list(id = "n_iba1_activated_cells_per_area",    label = "Number of activated cells per area",
+       stain_group = "Iba1", csv_column = "number of activated Iba1 positive cells per area"),
+  list(id = "n_iba1_inactivated_cells_per_area",  label = "Number of inactivated cells per area",
+       stain_group = "Iba1", csv_column = "number of inactivated Iba1 positive cells per area"),
+  list(id = "pct_iba1_positive_area",             label = "Percent positive area",
+       stain_group = "Iba1", csv_column = "percent Iba1 positive area"),
+  
+  list(id = "n_6e10_coloc_iba1_per_area",         label = "Number of 6E10 objects colocalized with Iba1 per area",
+       stain_group = "6E10 x Iba1", csv_column = "number of 6e10 positive objects colocalized with Iba1 positive objects per area"),
+  list(id = "pct_6e10_coloc_iba1",                label = "Percent of 6E10 objects colocalized with Iba1",
+       stain_group = "6E10 x Iba1", csv_column = "percent of 6e10 positive objects colocalized with Iba1 positive objects"),
+  
+  list(id = "avg_hematoxylin_nucleus_area",       label = "Average nucleus area",
+       stain_group = "Hematoxylin", csv_column = "average Hematoxylin positive nucleus area"),
+  list(id = "avg_hematoxylin_nucleus_perimeter",  label = "Average nucleus perimeter",
+       stain_group = "Hematoxylin", csv_column = "average Hematoxylin positive nucleus perimeter"),
+  list(id = "avg_hematoxylin_nucleus_roundness",  label = "Average nucleus roundness",
+       stain_group = "Hematoxylin", csv_column = "average Hematoxylin positive nucleus roundness"),
+  list(id = "n_hematoxylin_nuclei_per_area",      label = "Number of nuclei per area",
+       stain_group = "Hematoxylin", csv_column = "number of Hematoxylin positive nuclei per area"),
+  
+  list(id = "pct_gfap_positive_area",             label = "Percent positive area",
+       stain_group = "GFAP", csv_column = "percent GFAP positive area"),
+  
+  list(id = "avg_asyn_cell_area",                 label = "Average cell area",
+       stain_group = "aSyn", csv_column = "average aSyn positive cell area"),
+  list(id = "n_asyn_cells_per_area",              label = "Number of cells per area",
+       stain_group = "aSyn", csv_column = "number of aSyn positive cells per area"),
+  list(id = "pct_asyn_positive_area",             label = "Percent positive area",
+       stain_group = "aSyn", csv_column = "percent aSyn positive area"),
+  
+  list(id = "avg_at8_cell_area",                  label = "Average cell area",
+       stain_group = "AT8", csv_column = "average AT8 positive cell area"),
+  list(id = "n_at8_cells_per_area",               label = "Number of cells per area",
+       stain_group = "AT8", csv_column = "number of AT8 positive cells per area"),
+  list(id = "pct_at8_positive_area",              label = "Percent positive area",
+       stain_group = "AT8", csv_column = "percent AT8 positive area"),
+  
+  list(id = "avg_ptdp43_cell_area",               label = "Average cell area",
+       stain_group = "pTDP43", csv_column = "average pTDP43 positive cell area"),
+  list(id = "n_ptdp43_cells_per_area",            label = "Number of cells per area",
+       stain_group = "pTDP43", csv_column = "number of pTDP43 positive cells per area"),
+  list(id = "pct_ptdp43_positive_area",           label = "Percent positive area",
+       stain_group = "pTDP43", csv_column = "percent pTDP43 positive area"),
+  
+  list(id = "avg_neun_cell_area",                 label = "Average cell area",
+       stain_group = "NeuN", csv_column = "average NeuN positive cell area"),
+  list(id = "n_neun_cells_per_area",              label = "Number of cells per area",
+       stain_group = "NeuN", csv_column = "number of NeuN positive cells per area"),
+  list(id = "pct_neun_positive_area",             label = "Percent positive area",
+       stain_group = "NeuN", csv_column = "percent NeuN positive area")
+)
+
+# donor/region/subregion column headers in the QNP csv (edit if different).
+qnp_donor_column     <- "Donor ID"
+qnp_region_column     <- "brain region"
+qnp_subregion_column <- "analysis region"
+
+qnp_metadata_csv_path <- "ins/QNPMetadata.csv"  # <- point this at your real QNP csv
+
+qnp_metadata <- load_qnp_metadata_csv(qnp_metadata_csv_path)
 
 # shared theme — passed to navbarPage(theme = ...) in ui.R. defined here
 # (rather than at the bottom) since metadata_chart_color, below, needs it.
 app_theme <- bslib::bs_theme(bootswatch = "lux")
 
 # shared color used for BOTH histoslider bars and the categorical histogram
-# bars (register_metadata_histograms())
-metadata_chart_color <- "#7952b3"
+# bars (register_metadata_histograms()), so all metadata charts look
+# consistent — pulled directly from the Lux theme's actual "primary" purple
+# rather than a hardcoded guess, so it always matches whatever bootswatch is
+# set above even if that changes later.
+# shared color used for BOTH histoslider bars and the categorical histogram
+# bars (register_metadata_histograms()), so all metadata charts look
+# consistent. NOTE: previously this was derived via bslib::bs_get_variables()
+# to auto-match the theme's primary color, but that returned an unresolved
+# Sass reference (rendered literally as black) rather than a compiled hex
+# value — so it's hardcoded directly here instead.
+metadata_chart_color <- "#f6f2fb"
+
+# bar outline color — #f6f2fb above is very pale on its own, so bars need a
+# visible border to stand out against a white background.
+metadata_chart_border_color <- "#7952b3"
 
 # ---------------------------------------------------------------------------
 # annotation colors are chosen automatically per load — see
@@ -111,3 +222,21 @@ metadata_chart_color <- "#7952b3"
 # and assigns one color per label. nothing to configure here unless you want
 # to swap the palette scheme itself.
 # ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# precompute the "Filter donors by metadata" accordion (Demographic /
+# Clinical / QNP, with all its nested sub-accordions) ONCE per page prefix,
+# right here at app startup — not inside a renderUI, not per click, not per
+# user session. Everything it's built from (donor_metadata, qnp_metadata,
+# metadata_fields, qnp_fields) is static once these CSVs are loaded above,
+# so there's nothing to gain by rebuilding it later — every session's first
+# click on "Filter donors by metadata" now just hands back this already-built
+# object instantly, instead of re-walking every region/subregion/stain/field
+# combination from scratch. This is the fix for the earlier "first click is
+# slow" issue: that cost still exists, it's just paid once when the app
+# process starts rather than once per click.
+# ---------------------------------------------------------------------------
+precomputed_metadata_accordion_ui <- lapply(
+  list(home = "home", dstain = "dstain", sdonor = "sdonor", sregion = "sregion"),
+  function(p) build_metadata_accordion(p, donor_metadata)
+)

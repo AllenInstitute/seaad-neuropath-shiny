@@ -9,6 +9,14 @@ library(dplyr)
 # Load/Compare buttons via shinyjs — see server.r.
 is_selected <- function(x) !is.null(x) && length(x) == 1 && nzchar(x)
 
+# normalizes a donor id read from ANY csv (manifest, specimen metadata, QNP
+# metadata) so the same donor always compares equal across all three
+# sources, even if one file has leading/trailing whitespace or different
+# letter casing than another — this is exactly the kind of mismatch that
+# makes filter_donors_by_metadata()/filter_donors_by_qnp() intersect against
+# nothing and every donor go blank.
+normalize_donor_id <- function(x) trimws(toupper(as.character(x)))
+
 `%||%` <- function(x, y) if (is.null(x)) y else x
 
 # ---------------------------------------------------------------------------
@@ -131,6 +139,7 @@ build_donor_manifest_from_entries <- function(entries) {
       warning("skipping entry missing donor/region/stain_type: ", entry$s3_uri)
       next
     }
+    donor <- normalize_donor_id(donor)
     
     if (is.null(manifest[[donor]])) manifest[[donor]] <- list()
     if (is.null(manifest[[donor]][[region]])) manifest[[donor]][[region]] <- list()
@@ -486,7 +495,7 @@ load_specimen_metadata_csv <- function(path, donor_id_column = "Donor ID") {
   if (!(donor_id_column %in% names(df))) {
     stop("specimen csv is missing the donor id column: '", donor_id_column, "'")
   }
-  out <- data.frame(donor = df[[donor_id_column]], stringsAsFactors = FALSE)
+  out <- data.frame(donor = normalize_donor_id(df[[donor_id_column]]), stringsAsFactors = FALSE)
   
   for (f in metadata_fields) {
     col <- f$csv_column
@@ -509,6 +518,197 @@ load_specimen_metadata_csv <- function(path, donor_id_column = "Donor ID") {
   }
   
   out
+}
+
+# ---------------------------------------------------------------------------
+# QNP (quantitative neuropathology) — values keyed by donor + region +
+# subregion, loaded from a separate csv (see qnp_fields/qnp_metadata_csv_path
+# in global.r). Unlike load_specimen_metadata_csv(), a missing/unreadable
+# file here doesn't stop the app — it just means no QNP filters are
+# available yet, which is the expected state before that file exists.
+# ---------------------------------------------------------------------------
+
+empty_qnp_metadata <- function() {
+  df <- data.frame(donor = character(0), region = character(0), subregion = character(0),
+                   stringsAsFactors = FALSE)
+  for (f in qnp_fields) df[[f$id]] <- numeric(0)
+  df
+}
+
+load_qnp_metadata_csv <- function(path) {
+  if (!file.exists(path) && !grepl("^https?://", path)) {
+    warning("QNP metadata csv not found at '", path, "' — QNP filters will be unavailable until it exists.")
+    return(empty_qnp_metadata())
+  }
+  
+  df <- tryCatch(read.csv(path, check.names = FALSE, stringsAsFactors = FALSE), error = function(e) {
+    warning("could not read QNP metadata csv: ", e$message)
+    NULL
+  })
+  if (is.null(df)) return(empty_qnp_metadata())
+  
+  required <- c(qnp_donor_column, qnp_region_column, qnp_subregion_column)
+  missing_required <- setdiff(required, names(df))
+  if (length(missing_required) > 0) {
+    warning("QNP metadata csv is missing required column(s): ", paste(missing_required, collapse = ", "))
+    return(empty_qnp_metadata())
+  }
+  
+  out <- data.frame(
+    donor     = normalize_donor_id(df[[qnp_donor_column]]),
+    region    = df[[qnp_region_column]],
+    subregion = df[[qnp_subregion_column]],
+    stringsAsFactors = FALSE
+  )
+  
+  for (f in qnp_fields) {
+    col <- f$csv_column
+    if (is.null(col) || !(col %in% names(df))) {
+      warning("QNP metadata csv is missing column '", col, "' for field '", f$id, "' — that filter will be unavailable")
+      out[[f$id]] <- NA_real_
+      next
+    }
+    out[[f$id]] <- suppressWarnings(as.numeric(df[[col]]))
+  }
+  
+  out
+}
+
+get_qnp_regions <- function() sort(unique(qnp_metadata$region))
+
+get_qnp_subregions <- function(region) {
+  sort(unique(qnp_metadata$subregion[qnp_metadata$region == region]))
+}
+
+# unique stain groups, in the order qnp_fields declares them (not alphabetical).
+get_qnp_stain_groups <- function() {
+  groups <- vapply(qnp_fields, function(f) f$stain_group, character(1))
+  groups[!duplicated(groups)]
+}
+
+# a widget id unique to one (region, subregion, field) combination — needed
+# now that every region/subregion/stain nests statically into one big
+# accordion (rather than a single reactive selection), so every slider
+# needs its own id regardless of which region/subregion it belongs to.
+qnp_widget_id <- function(prefix, region, subregion, field_id) {
+  paste0(prefix, "_qnp_", gsub("[^A-Za-z0-9]+", "_", paste(region, subregion, field_id, sep = "_")))
+}
+
+# Filters donors by EVERY QNP histoslider across every region/subregion/
+# stain nested in the accordion (build_qnp_full_accordion()), not just one
+# selected combination — since there's no separate region/subregion picker
+# anymore, all of them coexist and any that have actually been dragged
+# apply at once.
+#
+# Semantics per the request: a donor is only ever EXCLUDED when they have a
+# real, out-of-range value for some active filter's specific region+
+# subregion. A donor with no row at all for that region+subregion, or a
+# real row with NA for a given field, is never excluded by that filter —
+# "unknown" always passes through. Starts from ALL donors for exactly this
+# reason, then subtracts out only the ones positively shown to fail.
+filter_donors_by_qnp <- function(input, prefix) {
+  excluded <- character(0)
+  
+  for (region in get_qnp_regions()) {
+    for (subregion in get_qnp_subregions(region)) {
+      subset <- qnp_metadata[qnp_metadata$region == region & qnp_metadata$subregion == subregion, , drop = FALSE]
+      if (nrow(subset) == 0) next
+      
+      for (f in qnp_fields) {
+        val <- histoslider_range(input[[paste0(qnp_widget_id(prefix, region, subregion, f$id), "_range")]])
+        if (is.null(val)) next
+        bad <- subset$donor[!is.na(subset[[f$id]]) & (subset[[f$id]] < val[1] | subset[[f$id]] > val[2])]
+        excluded <- union(excluded, bad)
+      }
+    }
+  }
+  
+  setdiff(donor_choices, excluded)
+}
+
+# builds the FULL nested QNP structure — one accordion of regions, each
+# containing an accordion of its subregions, each containing an accordion
+# of stain groups, each containing that group's sliders — entirely static
+# (no dropdowns, no server-side reactivity needed), so the whole thing can
+# be embedded directly inside build_metadata_accordion()'s QNP panel.
+build_qnp_full_accordion <- function(prefix) {
+  regions <- get_qnp_regions()
+  if (length(regions) == 0) {
+    return(shiny::helpText("No QNP data loaded yet."))
+  }
+  
+  build_stain_accordion <- function(region, subregion, subset) {
+    stain_panels <- lapply(get_qnp_stain_groups(), function(sg) {
+      fields_in_group <- Filter(function(f) identical(f$stain_group, sg), qnp_fields)
+      
+      sliders <- lapply(fields_in_group, function(f) {
+        vals <- stats::na.omit(subset[[f$id]])
+        if (length(vals) == 0) return(NULL)
+        shiny::tagList(
+          shiny::strong(f$label),
+          build_histoslider(paste0(qnp_widget_id(prefix, region, subregion, f$id), "_range"), vals),
+          shiny::tags$hr()
+        )
+      })
+      sliders <- Filter(Negate(is.null), sliders)
+      if (length(sliders) == 0) return(NULL)
+      
+      bslib::accordion_panel(title = sg, shiny::tagList(sliders))
+    })
+    stain_panels <- Filter(Negate(is.null), stain_panels)
+    if (length(stain_panels) == 0) return(NULL)
+    
+    do.call(bslib::accordion, c(
+      list(id = qnp_widget_id(prefix, region, subregion, "accordion"), open = FALSE),
+      stain_panels
+    ))
+  }
+  
+  region_panels <- lapply(regions, function(region) {
+    subregions <- get_qnp_subregions(region)
+    
+    # collect only the subregions that actually have data, keeping the
+    # built stain-accordion alongside its name so we know afterward whether
+    # there's exactly one (see the single-subregion shortcut below).
+    subregion_contents <- list()
+    for (subregion in subregions) {
+      subset <- qnp_metadata[qnp_metadata$region == region & qnp_metadata$subregion == subregion, , drop = FALSE]
+      if (nrow(subset) == 0) next
+      stain_accordion <- build_stain_accordion(region, subregion, subset)
+      if (is.null(stain_accordion)) next
+      subregion_contents[[subregion]] <- stain_accordion
+    }
+    if (length(subregion_contents) == 0) return(NULL)
+    
+    # only one subregion with data for this region — skip the subregion
+    # level of nesting entirely; fold its name into the region's own title.
+    if (length(subregion_contents) == 1) {
+      only_subregion <- names(subregion_contents)[[1]]
+      return(bslib::accordion_panel(
+        title = paste0(prettify_region(region), ": ", only_subregion),
+        subregion_contents[[1]]
+      ))
+    }
+    
+    subregion_panels <- lapply(names(subregion_contents), function(sr) {
+      bslib::accordion_panel(title = sr, subregion_contents[[sr]])
+    })
+    
+    bslib::accordion_panel(
+      title = prettify_region(region),
+      do.call(bslib::accordion, c(
+        list(id = paste0(prefix, "_qnp_region_", gsub("[^A-Za-z0-9]+", "_", region)), open = FALSE),
+        subregion_panels
+      ))
+    )
+  })
+  region_panels <- Filter(Negate(is.null), region_panels)
+  
+  if (length(region_panels) == 0) {
+    return(shiny::helpText("No QNP data loaded yet."))
+  }
+  
+  do.call(bslib::accordion, c(list(id = paste0(prefix, "_qnp_top_accordion"), open = FALSE), region_panels))
 }
 
 # fills in each field's bounds/choices from real data — WITHOUT overwriting
@@ -537,8 +737,20 @@ derive_metadata_fields <- function(fields, data) {
 # normalizes histoslider's selection value into a simple c(min, max).
 histoslider_range <- function(val) {
   if (is.null(val)) return(NULL)
-  if (is.list(val) && !is.null(val$start) && !is.null(val$end)) return(c(val$start, val$end))
-  as.numeric(val)
+  
+  result <- if (is.list(val) && !is.null(val$start) && !is.null(val$end)) {
+    c(val$start, val$end)
+  } else {
+    suppressWarnings(as.numeric(unlist(val)))
+  }
+  
+  # anything that doesn't cleanly resolve to exactly two real numbers (e.g.
+  # an empty list() sent as the widget's initial value before it's ever been
+  # touched) is treated as "no filter yet" rather than accidentally becoming
+  # a val[1]/val[2] of NA, which would make every donor fail the comparison
+  # and get excluded — this was the actual cause of donors going blank.
+  if (length(result) != 2 || anyNA(result)) return(NULL)
+  result
 }
 
 # reads the meta_* inputs for a given page prefix and filters donor_metadata
@@ -585,10 +797,17 @@ filter_donors_by_metadata <- function(metadata, input, prefix) {
 # our border/fill purples for a two-tone look consistent with the plain
 # categorical histograms elsewhere.
 build_histoslider <- function(id, values, breaks = NULL) {
-  histoslider::input_histoslider(
-    id, NULL, values, breaks = breaks,
+  # histoslider's own default for `breaks` is rlang::missing_arg() (an
+  # intentionally MISSING argument, not NULL) — passing a literal NULL
+  # instead makes its internal hist() call fail with "Invalid breakpoints
+  # ... NULL". so when no breaks were given, omit the argument entirely
+  # via do.call() rather than passing breaks = NULL.
+  args <- list(
+    id, NULL, values,
     options = list(selectedColor = metadata_chart_border_color, unselectedColor = metadata_chart_color)
   )
+  if (!is.null(breaks)) args$breaks <- breaks
+  do.call(histoslider::input_histoslider, args)
 }
 
 # one bslib accordion_panel per metadata field:
@@ -597,14 +816,19 @@ build_histoslider <- function(id, values, breaks = NULL) {
 #               checkbox) plus a separate histogram registered server-side
 #               via register_metadata_histograms().
 # widget ids are prefixed per page.
+# builds one accordion per page with THREE top-level panels: "Demographic"
+# and "Clinical" (from metadata_display_groups, global.r — each panel holds
+# one widget per field in that group), and "QNP" (the fully nested
+# region -> subregion -> stain accordion from build_qnp_full_accordion()).
 build_metadata_accordion <- function(prefix, data) {
-  panels <- lapply(metadata_fields, function(f) {
-    body <- if (f$type == "range") {
+  field_by_id <- stats::setNames(metadata_fields, vapply(metadata_fields, function(f) f$id, character(1)))
+  
+  build_field_widget <- function(f) {
+    if (f$type == "range") {
       # breaks at every integer so each bin has width 1 — gives a much finer
       # histogram than histoslider's default automatic binning.
       breaks <- seq(floor(f$min), ceiling(f$max), by = 1)
       build_histoslider(paste0(prefix, "_meta_", f$id, "_range"), data[[f$id]], breaks = breaks)
-      
     } else {
       shiny::tagList(
         shiny::checkboxGroupInput(
@@ -614,9 +838,35 @@ build_metadata_accordion <- function(prefix, data) {
         shiny::plotOutput(paste0(prefix, "_hist_", f$id), height = "170px")
       )
     }
-    bslib::accordion_panel(title = f$label, body)
+  }
+  
+  # one sub-accordion panel per field (same as the original pre-QNP layout),
+  # nested inside each group's own top-level panel.
+  group_panels <- lapply(names(metadata_display_groups), function(group_name) {
+    field_ids <- metadata_display_groups[[group_name]]
+    field_panels <- lapply(field_ids, function(fid) {
+      f <- field_by_id[[fid]]
+      if (is.null(f)) return(NULL)
+      bslib::accordion_panel(title = f$label, build_field_widget(f))
+    })
+    field_panels <- Filter(Negate(is.null), field_panels)
+    
+    sub_accordion <- do.call(bslib::accordion, c(
+      list(id = paste0(prefix, "_meta_group_", tolower(gsub("[^A-Za-z0-9]+", "_", group_name))), open = FALSE),
+      field_panels
+    ))
+    bslib::accordion_panel(title = group_name, sub_accordion)
   })
-  do.call(bslib::accordion, c(list(id = paste0(prefix, "_metadata_accordion"), open = FALSE), panels))
+  
+  # QNP panel temporarily removed while that section is being debugged
+  # separately — build_qnp_full_accordion() and everything it depends on
+  # (qnp_fields, qnp_metadata, filter_donors_by_qnp(), etc.) is untouched
+  # below, just not wired in here, so re-adding it is a one-line change:
+  #   do.call(bslib::accordion, c(list(...), group_panels, list(
+  #     bslib::accordion_panel(title = "QNP", build_qnp_full_accordion(prefix))
+  #   )))
+  
+  do.call(bslib::accordion, c(list(id = paste0(prefix, "_metadata_accordion"), open = FALSE), group_panels))
 }
 
 # registers the renderPlot output for every categorical ("select") field's
