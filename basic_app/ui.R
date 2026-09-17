@@ -25,7 +25,7 @@ tagList(
   ),
   
   navbarPage(
-    title = "SEA-AD Viewer",
+    title = "SEA-AD Neuropathology Viewer",
     theme = app_theme,
     id = "main_nav",  # lets server.R detect tab switches and reset every page
     
