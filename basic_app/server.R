@@ -214,7 +214,11 @@ function(input, output, session) {
                              shiny::setProgress(value = done / total, detail = sprintf("Fetching annotations: %d of %d", done, total))
                            })
     })
-    session$onFlushed(function() session$sendCustomMessage("loadImages", list(images = images)), once = TRUE)
+    # syncCheckboxId names the checkbox for the JS to check LIVE on every
+    # zoom/pan event, rather than a fixed value baked in at load time —
+    # that's what lets unchecking it after images are already loaded take
+    # effect immediately, with no reload needed.
+    session$onFlushed(function() session$sendCustomMessage("loadImages", list(images = images, syncCheckboxId = "dstain_sync_zoom")), once = TRUE)
   })
   
   # ===========================================================================
@@ -277,7 +281,11 @@ function(input, output, session) {
                              shiny::setProgress(value = done / total, detail = sprintf("Fetching annotations: %d of %d", done, total))
                            })
     })
-    session$onFlushed(function() session$sendCustomMessage("loadImages", list(images = images)), once = TRUE)
+    # syncCheckboxId names the checkbox for the JS to check LIVE on every
+    # zoom/pan event, rather than a fixed value baked in at load time —
+    # that's what lets unchecking it after images are already loaded take
+    # effect immediately, with no reload needed.
+    session$onFlushed(function() session$sendCustomMessage("loadImages", list(images = images, syncCheckboxId = "sdonor_sync_zoom")), once = TRUE)
   })
   
   # ===========================================================================
@@ -343,7 +351,11 @@ function(input, output, session) {
                              shiny::setProgress(value = done / total, detail = sprintf("Fetching annotations: %d of %d", done, total))
                            })
     })
-    session$onFlushed(function() session$sendCustomMessage("loadImages", list(images = images)), once = TRUE)
+    # syncCheckboxId names the checkbox for the JS to check LIVE on every
+    # zoom/pan event, rather than a fixed value baked in at load time —
+    # that's what lets unchecking it after images are already loaded take
+    # effect immediately, with no reload needed.
+    session$onFlushed(function() session$sendCustomMessage("loadImages", list(images = images, syncCheckboxId = "sregion_sync_zoom")), once = TRUE)
   })
   
   # ===========================================================================
@@ -487,6 +499,7 @@ function(input, output, session) {
     updateSelectInput(session, "dstain_stains", choices = character(0), selected = character(0))
     updateCheckboxInput(session, "dstain_show_overlay", value = FALSE)
     updateSliderInput(session, "dstain_overlay_opacity", value = 0)
+    updateCheckboxInput(session, "dstain_sync_zoom", value = TRUE)
   }
   
   reset_sdonor_page <- function() {
@@ -497,6 +510,7 @@ function(input, output, session) {
     updateSelectInput(session, "sdonor_donors_manual", choices = donor_choices, selected = character(0))
     updateCheckboxInput(session, "sdonor_show_overlay", value = FALSE)
     updateSliderInput(session, "sdonor_overlay_opacity", value = 0)
+    updateCheckboxInput(session, "sdonor_sync_zoom", value = TRUE)
   }
   
   reset_sregion_page <- function() {
@@ -507,6 +521,7 @@ function(input, output, session) {
     updateSelectInput(session, "sregion_regions", choices = character(0), selected = character(0))
     updateCheckboxInput(session, "sregion_show_overlay", value = FALSE)
     updateSliderInput(session, "sregion_overlay_opacity", value = 0)
+    updateCheckboxInput(session, "sregion_sync_zoom", value = TRUE)
   }
   
   observeEvent(input$home_reset_btn,    { reset_home_page();    showNotification("Page reset.", type = "message") })

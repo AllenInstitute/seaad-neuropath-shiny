@@ -182,6 +182,8 @@ tagList(
                ),
                mainPanel(
                  width = 8,
+                 checkboxInput("dstain_sync_zoom", strong("Sync zoom/pan across images"), value = TRUE),
+                 tags$div(style = "height:10px;"),
                  uiOutput("dstain_context_card"),   # only appears once Load has been clicked
                  tags$div(style = "height:18px;"),  # space between the card and the annotation checkboxes
                  uiOutput("dstain_annotation_ui"),
@@ -225,6 +227,8 @@ tagList(
                ),
                mainPanel(
                  width = 8,
+                 checkboxInput("sdonor_sync_zoom", strong("Sync zoom/pan across images"), value = TRUE),
+                 tags$div(style = "height:10px;"),
                  uiOutput("sdonor_context_card"),
                  tags$div(style = "height:18px;"),
                  uiOutput("sdonor_annotation_ui"),
@@ -261,6 +265,8 @@ tagList(
                ),
                mainPanel(
                  width = 8,
+                 checkboxInput("sregion_sync_zoom", strong("Sync zoom/pan across images"), value = TRUE),
+                 tags$div(style = "height:10px;"),
                  uiOutput("sregion_context_card"),
                  tags$div(style = "height:18px;"),
                  uiOutput("sregion_annotation_ui"),
@@ -309,6 +315,35 @@ tagList(
   tags$script(HTML("
     // containerId -> { osd: OpenSeadragon instance, annotationGroups: [...], hiddenGroups: {} }
     var viewers = {};
+
+    // guards against infinite recursion: programmatically moving viewer B's
+    // viewport to match viewer A also fires B's own 'animation' handler,
+    // which would otherwise try to sync everyone AGAIN (including back to
+    // A). While this flag is true, syncViewportToGroup() is a no-op.
+    var isSyncingViewers = false;
+
+    // mirrors one viewer's zoom + pan center to every OTHER viewer in
+    // groupContainerIds. Syncs both, not just zoom — zoom alone wouldn't
+    // show the corresponding region across images if each was panned
+    // somewhere different first.
+    function syncViewportToGroup(sourceContainerId, groupContainerIds) {
+      if (isSyncingViewers) return;
+      var source = viewers[sourceContainerId];
+      if (!source || !source.osd) return;
+      var vp = source.osd.viewport;
+      var zoom = vp.getZoom();
+      var center = vp.getCenter();
+
+      isSyncingViewers = true;
+      groupContainerIds.forEach(function(id) {
+        if (id === sourceContainerId) return;
+        var v = viewers[id];
+        if (!v || !v.osd) return;
+        v.osd.viewport.zoomTo(zoom, null, true);
+        v.osd.viewport.panTo(center, true);
+      });
+      isSyncingViewers = false;
+    }
 
     // creates (once) the transparent svg layer used to draw annotation polygons on top of a viewer
     function ensureSvgOverlay(containerId) {
@@ -382,6 +417,14 @@ tagList(
 
     // (re)creates an OpenSeadragon viewer per image spec sent from the server.
     Shiny.addCustomMessageHandler('loadImages', function(message) {
+      // all container ids in THIS batch (i.e. this page's grid) — the sync
+      // group a viewer propagates to. syncCheckboxId names the page's
+      // toggle checkbox, checked LIVE on every animation event below
+      // (rather than once here) — otherwise unchecking it after images
+      // are already loaded wouldn't take effect until reloading.
+      var groupContainerIds = (message.images || []).map(function(imgSpec) { return 'osd-' + imgSpec.id; });
+      var syncCheckboxId = message.syncCheckboxId;
+
       (message.images || []).forEach(function(imgSpec) {
         var containerId = 'osd-' + imgSpec.id;
         var container = document.getElementById(containerId);
@@ -408,7 +451,15 @@ tagList(
         });
         viewers[containerId].osd = osd;
 
-        osd.addHandler('animation', function() { redrawAnnotations(containerId); });
+        osd.addHandler('animation', function() {
+          redrawAnnotations(containerId);
+          // no checkbox id (e.g. Home, which has no toggle at all) is
+          // treated as sync-enabled — moot there anyway, since a single-
+          // image batch has no other viewer to propagate to.
+          var checkboxEl = syncCheckboxId ? document.getElementById(syncCheckboxId) : null;
+          var syncEnabled = checkboxEl ? checkboxEl.checked : true;
+          if (syncEnabled) syncViewportToGroup(containerId, groupContainerIds);
+        });
         osd.addHandler('open', function() { redrawAnnotations(containerId); });
         osd.addHandler('resize', function() { redrawAnnotations(containerId); });
 
