@@ -141,7 +141,8 @@ function(input, output, session) {
   
   output$home_reset_zoom_btn_ui <- renderUI({
     req(length(home_entries_rv()) > 0)
-    actionButton("home_reset_zoom_btn", lbl_reset_image_zoom, class = "btn-sm btn-secondary")
+    actionButton("home_reset_zoom_btn", lbl_reset_image_zoom,
+                 style = "background-color:#000; border-color:#000; color:#fff; font-size:16px;")
   })
   
   observeEvent(input$home_load_btn, {
@@ -207,7 +208,8 @@ function(input, output, session) {
   
   output$dstain_reset_zoom_btn_ui <- renderUI({
     req(length(dstain_entries_rv()) > 0)
-    actionButton("dstain_reset_zoom_btn", lbl_reset_image_zoom, class = "btn-sm btn-secondary")
+    actionButton("dstain_reset_zoom_btn", lbl_reset_image_zoom,
+                 style = "background-color:#000; border-color:#000; color:#fff; font-size:16px;")
   })
   
   output$dstain_annotation_ui <- renderUI({ render_annotation_master_ui(dstain_entries_rv(), id_prefix = "dstain", varying_field = "stain") })
@@ -274,7 +276,8 @@ function(input, output, session) {
   
   output$sdonor_reset_zoom_btn_ui <- renderUI({
     req(length(sdonor_entries_rv()) > 0)
-    actionButton("sdonor_reset_zoom_btn", lbl_reset_image_zoom, class = "btn-sm btn-secondary")
+    actionButton("sdonor_reset_zoom_btn", lbl_reset_image_zoom,
+                 style = "background-color:#000; border-color:#000; color:#fff; font-size:16px;")
   })
   
   output$sdonor_annotation_ui <- renderUI({ render_annotation_master_ui(sdonor_entries_rv(), id_prefix = "sdonor", varying_field = "donor") })
@@ -354,7 +357,8 @@ function(input, output, session) {
   
   output$sregion_reset_zoom_btn_ui <- renderUI({
     req(length(sregion_entries_rv()) > 0)
-    actionButton("sregion_reset_zoom_btn", lbl_reset_image_zoom, class = "btn-sm btn-secondary")
+    actionButton("sregion_reset_zoom_btn", lbl_reset_image_zoom,
+                 style = "background-color:#000; border-color:#000; color:#fff; font-size:16px;")
   })
   
   output$sregion_annotation_ui <- renderUI({ render_annotation_master_ui(sregion_entries_rv(), id_prefix = "sregion", varying_field = "region") })
