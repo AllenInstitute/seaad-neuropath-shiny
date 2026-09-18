@@ -669,7 +669,7 @@ qnp_grouping_has_multiple_regions <- function(grouping) {
 # Builders, filters and reset ALL call this, so their widget ids can never
 # drift apart — that drift was a real, separately-diagnosed bug.
 qnp_region_level_key <- function(region) {
-  if (qnp_region_has_multiple_subregions(region)) "Global" else names(qnp_by_region[[region]])[[1]]
+  if (qnp_region_has_multiple_subregions(region)) qnp_global_sentinel else names(qnp_by_region[[region]])[[1]]
 }
 
 # returns a data.frame(donor, value) for one field at one region +
@@ -680,7 +680,7 @@ identify_qnp_field_values <- function(region, subregion_choice, field_id) {
   subregion_subsets <- qnp_by_region[[region]]
   if (is.null(subregion_subsets)) return(data.frame(donor = character(0), value = numeric(0)))
   
-  if (identical(subregion_choice, "Global")) {
+  if (identical(subregion_choice, qnp_global_sentinel)) {
     combined <- do.call(rbind, subregion_subsets)
     agg <- stats::aggregate(
       combined[[field_id]], by = list(donor = combined$donor),
@@ -705,9 +705,20 @@ build_qnp_field_slider <- function(f, region, subregion_choice) {
   vals_df <- identify_qnp_field_values(region, subregion_choice, f$id)
   vals <- stats::na.omit(vals_df$value)
   if (length(vals) == 0) return(NULL)
+  
+  # explicit breaks spanning EXACTLY this region+subregion's real min/max.
+  # Without this, hist()'s automatic Sturges binning (histoslider's own
+  # default when no breaks are given — confirmed against its actual
+  # source) rounds bin edges outward past the true data range, so the
+  # slider's overall draggable track ends up wider than the values it's
+  # actually built from, even though the initial selection (start/end)
+  # was already scoped correctly.
+  rng <- range(vals)
+  breaks <- if (rng[1] == rng[2]) c(rng[1] - 0.5, rng[1] + 0.5) else seq(rng[1], rng[2], length.out = 21)
+  
   shiny::tagList(
     shiny::h6(qnp_field_display_label(f$label), style = "margin-bottom:2px;"),
-    build_histoslider(identify_donor_qnp_widget_id(region, subregion_choice, f$id), vals)
+    build_histoslider(identify_donor_qnp_widget_id(region, subregion_choice, f$id), vals, breaks = breaks)
   )
 }
 
@@ -920,7 +931,7 @@ register_identify_donors_qnp <- function(output, input) {
     # "Global (average)" only offered with >1 subregion — with just one,
     # the average IS that subregion's value, so it'd be a duplicate choice.
     choices <- if (qnp_region_has_multiple_subregions(region)) {
-      c("Global (average)" = "Global", subregions)
+      c("Global (average)" = qnp_global_sentinel, subregions)
     } else {
       subregions
     }
@@ -1090,6 +1101,14 @@ identify_donors_export_data <- function(donor_ids) {
 # every metadata value for ONE donor — demographic, clinical, and each QNP
 # row on record. This is the body of the click-a-donor-name popup; it is
 # not rendered inline anywhere on the page.
+# shared style for the purple card-header look used across the donor
+# popup's Demographic/Clinical/QNP cards (previously copy-pasted three
+# times below, each with a hardcoded hex instead of referencing
+# metadata_chart_color).
+purple_card_header_style <- function() {
+  sprintf("background:%s; color:#fff; font-weight:600;", metadata_chart_color)
+}
+
 render_donor_all_metadata <- function(donor_id) {
   row <- donor_metadata[donor_metadata$donor == donor_id, , drop = FALSE]
   if (nrow(row) == 0) return(shiny::p("No metadata found for this donor."))
@@ -1099,7 +1118,7 @@ render_donor_all_metadata <- function(donor_id) {
   group_cards <- lapply(names(metadata_display_groups), function(group_name) {
     bslib::card(
       style = "margin-bottom:10px;",
-      bslib::card_header(group_name, style = "background:#7952b3; color:#fff; font-weight:600;"),
+      bslib::card_header(group_name, style = purple_card_header_style()),
       bslib::card_body(
         shiny::tagList(lapply(metadata_display_groups[[group_name]], function(fid) {
           f <- field_by_id[[fid]]
@@ -1118,14 +1137,14 @@ render_donor_all_metadata <- function(donor_id) {
   qnp_section <- if (length(donor_regions) == 0) {
     bslib::card(
       style = "margin-bottom:10px;",
-      bslib::card_header("QNP", style = "background:#7952b3; color:#fff; font-weight:600;"),
+      bslib::card_header("QNP", style = purple_card_header_style()),
       bslib::card_body(shiny::p("No QNP data on record for this donor."))
     )
   } else {
     region_choices <- stats::setNames(donor_regions, vapply(donor_regions, prettify_region, character(1)))
     bslib::card(
       style = "margin-bottom:10px;",
-      bslib::card_header("QNP", style = "background:#7952b3; color:#fff; font-weight:600;"),
+      bslib::card_header("QNP", style = purple_card_header_style()),
       bslib::card_body(
         # one region per line (not inline) — click a region to see its
         # subregions below.
@@ -1153,11 +1172,16 @@ render_donor_qnp_region_detail <- function(donor_id, region, view_mode = "layers
   rows <- qnp_metadata[qnp_metadata$donor == donor_id & qnp_metadata$region == region, , drop = FALSE]
   if (nrow(rows) == 0) return(shiny::p("No QNP data on record for this donor in this region."))
   
+  # tight, explicit spacing for each value line — without this, the rows
+  # inherit whatever gap bslib::card_body() applies by default, which
+  # reads as too spaced out for a list this dense.
+  line_style <- "margin:0 0 2px 0; line-height:1.3;"
+  
   if (identical(view_mode, "global")) {
     vals <- Filter(Negate(is.null), lapply(qnp_fields, function(f) {
       v <- mean(rows[[f$id]], na.rm = TRUE)
       if (is.na(v)) return(NULL)
-      shiny::tags$div(shiny::tags$strong(paste0(qnp_field_display_label(f$label), ": ")), shiny::tags$span(signif(v, 4)))
+      shiny::tags$div(style = line_style, shiny::tags$strong(paste0(qnp_field_display_label(f$label), ": ")), shiny::tags$span(signif(v, 4)))
     }))
     if (length(vals) == 0) return(shiny::p("No percent-field data for this donor/region."))
     return(bslib::card(bslib::card_body(vals)))
@@ -1168,7 +1192,7 @@ render_donor_qnp_region_detail <- function(donor_id, region, view_mode = "layers
     vals <- Filter(Negate(is.null), lapply(qnp_fields_all, function(f) {
       v <- r[[f$id]]
       if (is.null(v) || is.na(v)) return(NULL)
-      shiny::tags$div(shiny::tags$strong(paste0(f$label, ": ")), shiny::tags$span(signif(v, 4)))
+      shiny::tags$div(style = line_style, shiny::tags$strong(paste0(f$label, ": ")), shiny::tags$span(signif(v, 4)))
     }))
     if (length(vals) == 0) return(NULL)
     bslib::card(
@@ -1203,7 +1227,7 @@ render_identify_donors_table <- function(donor_ids) {
               donor_id
             ),
             shiny::tags$span(
-              style = "cursor:pointer; color:#7952b3;",
+              style = sprintf("cursor:pointer; color:%s;", metadata_chart_color),
               title = "Copy donor id",
               onclick = sprintf("copyTextRobust('%s', this)", donor_id),
               shiny::icon("copy")
@@ -1609,7 +1633,7 @@ render_donor_metadata_qnp_block <- function(donor_id, image_region, image_stain)
       }))
       if (length(vals) == 0) return(NULL)
       shiny::tags$div(
-        style = "margin:6px 0; padding:6px; background:#f6f2fb; border-radius:4px;",
+        style = sprintf("margin:6px 0; padding:6px; background:%s; border-radius:4px;", accent_bg_color),
         shiny::tags$div(style = "margin-bottom:2px; font-weight:600;", r$subregion),
         vals
       )

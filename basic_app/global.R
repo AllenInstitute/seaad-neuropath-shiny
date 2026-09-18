@@ -190,7 +190,7 @@ qnp_fields <- list(
 # (see load_qnp_metadata_csv()), so the app still works with a 2-level
 # hierarchy until you confirm the real column name here.
 qnp_donor_column           <- "Donor ID"
-qnp_region_grouping_column <- "region"  
+qnp_region_grouping_column <- "region"
 qnp_region_column           <- "brain region"
 qnp_subregion_column       <- "analysis region"
 
@@ -279,6 +279,26 @@ app_theme <- bslib::bs_theme(bootswatch = "lux")
 # Sass reference (rendered literally as black) rather than a compiled hex
 # value — so it's hardcoded directly here instead.
 metadata_chart_color <- "#7952b3"
+
+# light lavender background used for card/box accents throughout (donor
+# popup QNP boxes, the constraint card on comparison pages, etc.) — a
+# distinct purpose from metadata_chart_color above (that one's for
+# chart fills; this one's a background tint), so it's its own constant
+# rather than reusing that one for an unrelated purpose.
+accent_bg_color <- "#f6f2fb"
+
+# the sentinel value meaning "averaged across every subregion in this
+# region" throughout the QNP filtering/display code (identify_qnp_field_values(),
+# qnp_region_level_key(), the subregion selector's choices, etc.) — one
+# named constant instead of the literal string "Global" repeated in each
+# of those places.
+qnp_global_sentinel <- "Global"
+
+# the Filter Donors tab's exact title — compared against input$main_nav in
+# several places in server.r to gate that page's lazy-built content, and
+# used by ui.r's tabPanel() itself, so those can never drift apart the way
+# a hardcoded copy in each place could.
+filter_donors_tab_name <- "Filter Donors"
 
 # ---------------------------------------------------------------------------
 # annotation colors are chosen automatically per load — see

@@ -3,7 +3,7 @@ function(input, output, session) {
   # scroll-to-top arrow: left side on Filter Donors (per request), right
   # side on every other page.
   output$scroll_top_arrow_ui <- renderUI({
-    side <- if (identical(input$main_nav, "Filter Donors")) "left:18px;" else "right:18px;"
+    side <- if (identical(input$main_nav, filter_donors_tab_name)) "left:18px;" else "right:18px;"
     tags$a(
       href = "javascript:void(0)",
       onclick = "window.scrollTo({top: 0, behavior: 'smooth'})",
@@ -11,7 +11,7 @@ function(input, output, session) {
       style = paste(
         "position:fixed;", side, "bottom:24px; z-index:1050;",
         "width:42px; height:42px; border-radius:50%;",
-        "background:#7952b3; color:#fff; text-decoration:none;",
+        sprintf("background:%s; color:#fff; text-decoration:none;", metadata_chart_color),
         "display:flex; align-items:center; justify-content:center;",
         "font-size:20px; line-height:1; box-shadow:0 2px 6px rgba(0,0,0,0.3);"
       ),
@@ -32,7 +32,10 @@ function(input, output, session) {
   constraint_card <- function(...) {
     pairs <- list(...)
     div(
-      style = "padding:10px 16px; margin-bottom:12px; background:#f6f2fb; border-left:4px solid #7952b3; border-radius:4px;",
+      style = sprintf(
+        "padding:10px 16px; margin-bottom:12px; background:%s; border-left:4px solid %s; border-radius:4px;",
+        accent_bg_color, metadata_chart_color
+      ),
       tagList(lapply(names(pairs), function(k) {
         tags$span(style = "margin-right:24px;", tags$strong(paste0(k, ": ")), pairs[[k]])
       }))
@@ -364,17 +367,17 @@ function(input, output, session) {
   })
   
   output$identify_donors_metadata_accordion_ui <- renderUI({
-    req(identical(input$main_nav, "Filter Donors"))
+    req(identical(input$main_nav, filter_donors_tab_name))
     build_identify_donors_metadata_accordion()
   })
   
   output$identify_donors_qnp_accordion_ui <- renderUI({
-    req(identical(input$main_nav, "Filter Donors"))
+    req(identical(input$main_nav, filter_donors_tab_name))
     build_identify_donors_qnp_accordion()
   })
   
   identify_matching_donors <- reactive({
-    req(identical(input$main_nav, "Filter Donors"))
+    req(identical(input$main_nav, filter_donors_tab_name))
     filter_donors_identify_page(input, iddonors_baselines)
   })
   

@@ -25,7 +25,7 @@ tagList(
       style = paste(
         "position:absolute; top:8px; right:44px; white-space:nowrap;",
         "display:flex; align-items:center; gap:4px;",
-        "font-size:13px; font-weight:600; color:#7952b3;"
+        sprintf("font-size:13px; font-weight:600; color:%s;", metadata_chart_color)
       ),
       "Take notes", HTML("&rarr;")
     ),
@@ -34,7 +34,7 @@ tagList(
       onclick = "document.getElementById('scratchpad_panel').classList.toggle('scratchpad-hidden')",
       style = paste(
         "width:34px; height:34px; border-radius:50%; border:none;",
-        "background:#7952b3; color:#fff; font-size:16px; cursor:pointer;"
+        sprintf("background:%s; color:#fff; font-size:16px; cursor:pointer;", metadata_chart_color)
       ),
       shiny::icon("note-sticky")
     ),
@@ -276,7 +276,7 @@ tagList(
     # donors of interest, which can then be pulled into the Compare Donors
     # page (see its "Use donor set" button) or copied out directly.
     # =========================================================================
-    tabPanel("Filter Donors",
+    tabPanel(filter_donors_tab_name,
              sidebarLayout(
                sidebarPanel(
                  width = 4,
