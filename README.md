@@ -23,8 +23,8 @@ shiny::runApp("./basic_app")
 
 WIP:
 - [x] incorporate quantitative np for donor selection 
-- [ ] reorganize layer selection information
-- [ ] sync views for zooming in within the same region
+- [x] reorganize layer selection information
+- [x] sync views for zooming in within the same region
 - [ ] Cap the donor count: show how many are being shown (10?)
 
 ## Version information
