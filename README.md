@@ -2,10 +2,10 @@
 RShiny app to visualize neuropathology images
 
 ## Local Use
-Clone the repository from GitHub.
+Clone the repository from GitHub or download the source code from the [release page](https://github.com/AllenInstitute/seaad-neuropath-shiny/releases/tag/v0.1.0).
 
 ```sh
-git clone git@github.com:AllenInstitute/seaad-neuropath-shiny.git
+git clone --branch v0.1.0 --depth 1 git@github.com:AllenInstitute/seaad-neuropath-shiny.git
 ```
 
 Run the app in RStudio / using R. 
