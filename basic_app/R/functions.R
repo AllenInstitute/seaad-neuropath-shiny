@@ -1033,47 +1033,66 @@ render_donor_all_metadata <- function(donor_id) {
   
   field_by_id <- stats::setNames(metadata_fields, vapply(metadata_fields, function(f) f$id, character(1)))
   
-  group_blocks <- lapply(names(metadata_display_groups), function(group_name) {
-    shiny::tagList(
-      shiny::strong(group_name),
-      shiny::div(
-        style = "display:flex; flex-wrap:wrap; gap:14px; margin:6px 0 14px 0;",
-        lapply(metadata_display_groups[[group_name]], function(fid) {
+  group_cards <- lapply(names(metadata_display_groups), function(group_name) {
+    bslib::card(
+      style = "margin-bottom:10px;",
+      bslib::card_header(group_name, style = "background:#7952b3; color:#fff; font-weight:600;"),
+      bslib::card_body(
+        shiny::tagList(lapply(metadata_display_groups[[group_name]], function(fid) {
           f <- field_by_id[[fid]]
           if (is.null(f)) return(NULL)
-          shiny::tags$div(shiny::tags$strong(paste0(f$label, ": ")), as.character(row[[fid]]))
-        })
+          shiny::tags$div(
+            style = "margin-bottom:4px;",
+            shiny::tags$strong(paste0(f$label, ": ")),
+            shiny::tags$span(as.character(row[[fid]]))
+          )
+        }))
       )
     )
   })
   
-  qnp_rows <- qnp_metadata[qnp_metadata$donor == donor_id, , drop = FALSE]
-  qnp_block <- if (nrow(qnp_rows) == 0) {
-    shiny::tagList(shiny::strong("QNP"), shiny::p("No QNP data on record for this donor."))
+  donor_regions <- sort(unique(qnp_metadata$region[qnp_metadata$donor == donor_id]))
+  qnp_section <- if (length(donor_regions) == 0) {
+    shiny::tagList(shiny::tags$hr(), shiny::strong("QNP"), shiny::p("No QNP data on record for this donor."))
   } else {
+    region_choices <- stats::setNames(donor_regions, vapply(donor_regions, prettify_region, character(1)))
     shiny::tagList(
-      shiny::strong("QNP"),
-      shiny::tagList(lapply(seq_len(nrow(qnp_rows)), function(i) {
-        r <- qnp_rows[i, , drop = FALSE]
-        vals <- Filter(Negate(is.null), lapply(qnp_fields_all, function(f) {
-          v <- r[[f$id]]
-          if (is.null(v) || is.na(v)) return(NULL)
-          shiny::tags$div(shiny::tags$strong(paste0(f$label, ": ")), signif(v, 4))
-        }))
-        if (length(vals) == 0) return(NULL)
-        shiny::tags$div(
-          style = "margin:8px 0; padding:8px; background:#f6f2fb; border-radius:4px;",
-          shiny::tags$div(
-            style = "margin-bottom:4px;",
-            shiny::tags$strong(paste0(prettify_region(r$region), ": ", r$subregion))
-          ),
-          vals
-        )
-      }))
+      shiny::tags$hr(),
+      shiny::strong("QNP — click a region:"),
+      shiny::radioButtons("iddonors_popup_region_sel", NULL, choices = region_choices, selected = donor_regions[1], inline = TRUE),
+      shiny::uiOutput("iddonors_popup_qnp_ui")
     )
   }
   
-  shiny::tagList(group_blocks, shiny::tags$hr(), qnp_block)
+  shiny::tagList(group_cards, qnp_section)
+}
+
+# one region's QNP detail for the popup: the region name as a BIG heading,
+# then every subregion (layer) it has, each with its own sub-heading and
+# bold-label/plain-value measures underneath.
+render_donor_qnp_region_detail <- function(donor_id, region) {
+  rows <- qnp_metadata[qnp_metadata$donor == donor_id & qnp_metadata$region == region, , drop = FALSE]
+  if (nrow(rows) == 0) return(shiny::p("No QNP data on record for this donor in this region."))
+  
+  single_subregion <- nrow(rows) == 1
+  
+  shiny::tagList(
+    shiny::h4(prettify_region(region), style = "margin-top:12px; color:#7952b3;"),
+    shiny::tagList(lapply(seq_len(nrow(rows)), function(i) {
+      r <- rows[i, , drop = FALSE]
+      vals <- Filter(Negate(is.null), lapply(qnp_fields_all, function(f) {
+        v <- r[[f$id]]
+        if (is.null(v) || is.na(v)) return(NULL)
+        shiny::tags$div(shiny::tags$strong(paste0(f$label, ": ")), shiny::tags$span(signif(v, 4)))
+      }))
+      if (length(vals) == 0) return(NULL)
+      shiny::tags$div(
+        style = "margin:8px 0; padding:8px; background:#f6f2fb; border-radius:4px;",
+        if (!single_subregion) shiny::h6(r$subregion, style = "margin-bottom:4px;"),
+        vals
+      )
+    }))
+  )
 }
 
 # a plain HTML table of the full metadata for every matching donor.
@@ -1090,11 +1109,19 @@ render_identify_donors_table <- function(donor_ids) {
       # changes with every filter change.
       if (identical(nm, "Donor")) {
         donor_id <- as.character(df[i, nm])
-        shiny::tags$td(shiny::tags$a(
-          href = "javascript:void(0)",
-          onclick = sprintf("Shiny.setInputValue('iddonors_clicked_donor', '%s', {priority: 'event'})", donor_id),
-          donor_id
-        ))
+        shiny::tags$td(
+          shiny::tags$a(
+            href = "javascript:void(0)",
+            onclick = sprintf("Shiny.setInputValue('iddonors_clicked_donor', '%s', {priority: 'event'})", donor_id),
+            donor_id
+          ),
+          shiny::tags$span(
+            style = "cursor:pointer; color:#7952b3; margin-left:6px;",
+            title = "Copy donor id",
+            onclick = sprintf("copyTextRobust('%s')", donor_id),
+            shiny::icon("copy")
+          )
+        )
       } else {
         shiny::tags$td(as.character(df[i, nm]))
       }
@@ -1326,7 +1353,7 @@ render_viewer_grid_ui <- function(entries, label_field = c("stain", "donor", "re
         bslib::popover(
           shiny::tags$span(shiny::icon("circle-info"), style = "color:#888; cursor:pointer;"),
           title = paste("Donor", label),
-          render_donor_metadata_list(e$donor)
+          render_donor_metadata_list(e$donor, image_region = e$region, image_stain = e$stain)
         )
       )
     } else {
@@ -1442,16 +1469,64 @@ build_images_payload <- function(entries, overlay_opacity, show_overlay = TRUE, 
 # popover next to each donor heading on the Compare Donors page. unlike
 # render_donor_metadata_card(), this has no heading/grouping of its own,
 # since the popover title already provides that context.
-render_donor_metadata_list <- function(donor_id) {
+render_donor_metadata_list <- function(donor_id, image_region = NULL, image_stain = NULL) {
   row <- donor_metadata[donor_metadata$donor == donor_id, , drop = FALSE]
   if (nrow(row) == 0) return(shiny::p("No metadata found for this donor."))
   
-  shiny::tagList(lapply(metadata_fields, function(f) {
+  meta_block <- shiny::tagList(lapply(metadata_fields, function(f) {
     shiny::tags$div(
       style = "margin-bottom:4px; white-space:nowrap;",
       shiny::tags$strong(paste0(f$label, ": ")), as.character(row[[f$id]])
     )
   }))
+  
+  qnp_block <- render_donor_metadata_qnp_block(donor_id, image_region, image_stain)
+  shiny::tagList(meta_block, qnp_block)
+}
+
+# QNP values for one donor, scoped to the image region+stain currently
+# being viewed on Compare Donors (crosswalked via qnp_region_crosswalk /
+# qnp_stain_crosswalk, global.r) — every measure (qnp_fields_all, not just
+# percent-type), across every layer/subregion in that region.
+render_donor_metadata_qnp_block <- function(donor_id, image_region, image_stain) {
+  if (is.null(image_region) || is.null(image_stain)) return(NULL)
+  
+  qnp_region <- qnp_region_crosswalk[[image_region]]
+  stain_groups <- qnp_stain_crosswalk[[image_stain]]
+  if (is.null(qnp_region) || is.null(stain_groups)) {
+    return(shiny::tagList(
+      shiny::tags$hr(),
+      shiny::strong("QNP"),
+      shiny::p(style = "font-size:0.85em; color:#888;",
+               "No QNP crosswalk entry for this region/stain — see qnp_region_crosswalk/qnp_stain_crosswalk in global.R.")
+    ))
+  }
+  
+  rows <- qnp_metadata[qnp_metadata$donor == donor_id & qnp_metadata$region == qnp_region, , drop = FALSE]
+  fields <- Filter(function(f) f$stain_group %in% stain_groups, qnp_fields_all)
+  
+  if (nrow(rows) == 0 || length(fields) == 0) {
+    return(shiny::tagList(shiny::tags$hr(), shiny::strong("QNP"), shiny::p("No QNP data on record for this donor/region/stain.")))
+  }
+  
+  shiny::tagList(
+    shiny::tags$hr(),
+    shiny::strong("QNP"),
+    shiny::tagList(lapply(seq_len(nrow(rows)), function(i) {
+      r <- rows[i, , drop = FALSE]
+      vals <- Filter(Negate(is.null), lapply(fields, function(f) {
+        v <- r[[f$id]]
+        if (is.null(v) || is.na(v)) return(NULL)
+        shiny::tags$div(shiny::tags$strong(paste0(f$label, ": ")), signif(v, 4))
+      }))
+      if (length(vals) == 0) return(NULL)
+      shiny::tags$div(
+        style = "margin:6px 0; padding:6px; background:#f6f2fb; border-radius:4px;",
+        shiny::tags$div(style = "margin-bottom:2px; font-weight:600;", r$subregion),
+        vals
+      )
+    }))
+  )
 }
 
 # shows one donor's metadata as separate cards, grouped per

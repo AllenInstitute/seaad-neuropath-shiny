@@ -14,7 +14,7 @@ tagList(
     onclick = "window.scrollTo({top: 0, behavior: 'smooth'})",
     title = "Back to top",
     style = paste(
-      "position:fixed; right:18px; bottom:24px; z-index:1050;",
+      "position:fixed; left:18px; bottom:24px; z-index:1050;",
       "width:42px; height:42px; border-radius:50%;",
       "background:#7952b3; color:#fff; text-decoration:none;",
       "display:flex; align-items:center; justify-content:center;",
@@ -25,6 +25,28 @@ tagList(
   
   tags$head(
     tags$script(src = "https://cdn.jsdelivr.net/npm/openseadragon@4/build/openseadragon/openseadragon.min.js"),
+    tags$script(HTML("
+      // navigator.clipboard needs a SECURE CONTEXT (https, or localhost) —
+      // on a plain http:// deployment it doesn't exist at all, and calling
+      // it does nothing with no visible error. This is almost certainly
+      // why 'Copy donor list' looked broken. Falls back to the classic
+      // execCommand approach whenever the Clipboard API isn't available.
+      function copyTextRobust(text) {
+        if (navigator.clipboard && window.isSecureContext) {
+          navigator.clipboard.writeText(text);
+        } else {
+          var ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.position = 'fixed';
+          ta.style.left = '-9999px';
+          document.body.appendChild(ta);
+          ta.focus();
+          ta.select();
+          try { document.execCommand('copy'); } catch (e) {}
+          document.body.removeChild(ta);
+        }
+      }
+    ")),
     tags$style(HTML("
       /* wider popovers so donor-metadata content (render_donor_metadata_list)
          doesn't get cut off by Bootstrap's fairly narrow default max-width */
@@ -213,16 +235,17 @@ tagList(
                  width = 8,
                  h4("Matching donors"),
                  textOutput("identify_donors_count_text"),
+                 uiOutput("identify_donors_zero_warning_ui"),
                  div(
                    style = "margin:12px 0; display:flex; gap:8px;",
                    downloadButton("iddonors_download_btn", "Download table (.csv)", class = "btn-secondary"),
                    tags$button(
                      "Copy donor list",
                      class = "btn btn-secondary",
-                     onclick = "navigator.clipboard.writeText(document.getElementById('identify_donors_list_pre').innerText)"
+                     onclick = "copyTextRobust(document.getElementById('identify_donors_list_pre').textContent)"
                    )
                  ),
-                 helpText("Click a donor's name for all of their metadata, including every QNP measure."),
+                 helpText("Click a donor's name for all metadata, including QNP values."),
                  uiOutput("identify_donors_table_ui"),
                  # hidden plain list, kept only so the Copy button has plain text to grab
                  tags$div(style = "display:none;", tags$pre(id = "identify_donors_list_pre", textOutput("identify_donors_list_text")))

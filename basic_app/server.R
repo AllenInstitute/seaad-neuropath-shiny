@@ -354,6 +354,17 @@ function(input, output, session) {
     sprintf("%d of %d donors match.", length(identify_matching_donors()), length(donor_choices))
   })
   
+  # a plain count can go quiet at 0 without the user noticing WHY (which
+  # slider did it) — this makes the "you've filtered everyone out" state
+  # impossible to miss, without needing the filters themselves to become
+  # reactive to each other (see the design note in the chat reply for why
+  # that's a much bigger, riskier change than this warning).
+  output$identify_donors_zero_warning_ui <- renderUI({
+    req(length(identify_matching_donors()) == 0)
+    div(class = "alert alert-warning", style = "margin-top:8px;",
+        "No donors match the current combination of filters. Try widening a slider or clearing a checkbox.")
+  })
+  
   output$identify_donors_table_ui <- renderUI({
     render_identify_donors_table(identify_matching_donors())
   })
@@ -368,18 +379,43 @@ function(input, output, session) {
     }
   )
   
-  # clicking a donor's name in the table opens a popup with everything on
-  # record for them, including all QNP measures.
+  # tracks which donor's popup is currently open — needed now that the
+  # QNP section inside it is region-dependent and reactive (a radio
+  # button INSIDE the modal), not a one-shot static render.
+  iddonors_popup_donor <- reactiveVal(NULL)
+  
+  # clicking a donor's name in the table opens a popup with their
+  # Demographic/Clinical metadata plus a region-by-region QNP browser.
   observeEvent(input$iddonors_clicked_donor, {
     donor_id <- input$iddonors_clicked_donor
     req(is_selected(donor_id))
+    iddonors_popup_donor(donor_id)
     showModal(modalDialog(
-      title = donor_id,
+      title = div(
+        style = "display:flex; justify-content:space-between; align-items:center;",
+        span(donor_id),
+        tags$span(
+          shiny::icon("times"),
+          style = "cursor:pointer; font-size:18px;",
+          title = "Close",
+          onclick = "Shiny.setInputValue('iddonors_popup_close', Math.random(), {priority: 'event'})"
+        )
+      ),
       render_donor_all_metadata(donor_id),
       easyClose = TRUE,
       size = "l",
       footer = modalButton("Close")
     ))
+  })
+  
+  observeEvent(input$iddonors_popup_close, { removeModal() })
+  
+  # the region-dependent half of the popup — rebuilt whenever the radio
+  # inside the (currently open) modal changes.
+  output$iddonors_popup_qnp_ui <- renderUI({
+    donor_id <- iddonors_popup_donor()
+    req(is_selected(donor_id), is_selected(input$iddonors_popup_region_sel))
+    render_donor_qnp_region_detail(donor_id, input$iddonors_popup_region_sel)
   })
   
   # kept only as a hidden text source for the page's Copy button.
