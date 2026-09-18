@@ -6,8 +6,100 @@ tagList(
   
   useShinyjs(),
   
+  # always-visible scroll-to-top arrow. Sits outside navbarPage entirely
+  # and is position:fixed, so it stays on the side of the viewport no
+  # matter how far down the page is scrolled — server-rendered so its
+  # side (left on Filter Donors, right elsewhere) can depend on the
+  # active tab; see output$scroll_top_arrow_ui in server.r.
+  uiOutput("scroll_top_arrow_ui"),
+  
+  # floating scratchpad — session-only (survives switching tabs, not a
+  # page refresh). It's a small toggle button that expands a panel
+  # holding a plain textAreaInput. Because that input is static (never
+  # inside a renderUI, and deliberately left out of the tab-change reset
+  # observer in server.r), Shiny keeps its value automatically for the
+  # whole session — no reactiveVal or other plumbing needed for that part.
+  tags$div(
+    style = "position:fixed; top:8px; right:60px; z-index:1060;",
+    tags$div(
+      style = paste(
+        "position:absolute; top:8px; right:44px; white-space:nowrap;",
+        "display:flex; align-items:center; gap:4px;",
+        sprintf("font-size:13px; font-weight:600; color:%s;", metadata_chart_color)
+      ),
+      "Take notes", HTML("&rarr;")
+    ),
+    tags$button(
+      type = "button", title = "Notes",
+      onclick = "document.getElementById('scratchpad_panel').classList.toggle('scratchpad-hidden')",
+      style = paste(
+        "width:34px; height:34px; border-radius:50%; border:none;",
+        sprintf("background:%s; color:#fff; font-size:16px; cursor:pointer;", metadata_chart_color)
+      ),
+      shiny::icon("note-sticky")
+    ),
+    tags$div(
+      id = "scratchpad_panel",
+      class = "scratchpad-hidden",
+      style = paste(
+        "position:absolute; top:40px; right:0; width:280px;",
+        "background:#fff; border:1px solid #ddd; border-radius:8px;",
+        "box-shadow:0 2px 10px rgba(0,0,0,0.25); padding:10px;"
+      ),
+      strong("Notes"),
+      textAreaInput("scratchpad_notes", NULL, rows = 8, width = "100%", resize = "vertical"),
+      actionButton("scratchpad_reset_btn", "Clear", class = "btn-sm btn-secondary")
+    )
+  ),
+  tags$style(HTML(".scratchpad-hidden { display: none; }")),
+  
   tags$head(
     tags$script(src = "https://cdn.jsdelivr.net/npm/openseadragon@4/build/openseadragon/openseadragon.min.js"),
+    tags$script(HTML("
+      // navigator.clipboard needs a SECURE CONTEXT (https, or localhost) —
+      // on a plain http:// deployment it doesn't exist at all, and calling
+      // it does nothing with no visible error. Sandboxed webviews (e.g.
+      // RStudio's built-in Viewer pane) can ALSO fail even when the API
+      // exists, because they often can't reach the system clipboard at
+      // all — if that's what's happening here, opening the app in a real
+      // browser tab (not the Viewer pane) should resolve it immediately.
+      //
+      // el is the CLICKED element (pass `this` from onclick) — flashes it
+      // to 'Copied!' briefly so clicking always gives visible confirmation
+      // either way, rather than a silent success-or-failure.
+      function copyTextRobust(text, el) {
+        function flash() {
+          if (!el) return;
+          var orig = el.getAttribute('data-orig') || el.innerHTML;
+          el.setAttribute('data-orig', orig);
+          el.innerHTML = 'Copied!';
+          setTimeout(function () { el.innerHTML = orig; }, 1200);
+        }
+        function fallback() {
+          var ta = document.createElement('textarea');
+          ta.value = text;
+          ta.style.position = 'fixed';
+          ta.style.left = '-9999px';
+          document.body.appendChild(ta);
+          ta.focus();
+          ta.select();
+          var ok = false;
+          try { ok = document.execCommand('copy'); } catch (e) {}
+          document.body.removeChild(ta);
+          // execCommand's return value was never being checked before —
+          // meaning 'Copied!' could show even when copying silently
+          // failed (e.g. a sandboxed iframe, like RStudio's Viewer pane,
+          // blocking clipboard access entirely). If BOTH mechanisms fail,
+          // this guarantees the text is still visible to copy by hand.
+          if (ok) { flash(); } else { window.prompt('Copy failed — copy manually:', text); }
+        }
+        if (navigator.clipboard && window.isSecureContext) {
+          navigator.clipboard.writeText(text).then(flash).catch(fallback);
+        } else {
+          fallback();
+        }
+      }
+    ")),
     tags$style(HTML("
       /* wider popovers so donor-metadata content (render_donor_metadata_list)
          doesn't get cut off by Bootstrap's fairly narrow default max-width */
@@ -40,7 +132,7 @@ tagList(
                  checkboxInput("home_filter_donors", "Filter donors by metadata", value = FALSE),
                  conditionalPanel(
                    condition = "input.home_filter_donors",
-                   build_metadata_accordion("home", donor_metadata)
+                   uiOutput("home_metadata_accordion_ui")
                  ),
                  selectInput("home_region", "Region", choices = with_placeholder(character(0))),
                  selectInput("home_stain", "Stain", choices = with_placeholder(character(0))),
@@ -51,7 +143,8 @@ tagList(
                    condition = "input.home_show_overlay",
                    sliderInput("home_overlay_opacity", "Overlay opacity", min = 0, max = 1, value = 0, step = 0.05)
                  ),
-                 actionButton("home_load_btn", "Load", class = "btn-primary")
+                 actionButton("home_load_btn", "Load", class = "btn-primary"),
+                 actionButton("home_reset_btn", "Reset", class = "btn-secondary", style = "margin-left:8px;")
                ),
                mainPanel(
                  width = 8,
@@ -74,7 +167,7 @@ tagList(
                  checkboxInput("dstain_filter_donors", "Filter donors by metadata", value = FALSE),
                  conditionalPanel(
                    condition = "input.dstain_filter_donors",
-                   build_metadata_accordion("dstain", donor_metadata)
+                   uiOutput("dstain_metadata_accordion_ui")
                  ),
                  selectInput("dstain_region", "Region", choices = with_placeholder(character(0))),
                  selectInput("dstain_stains", "Stains to compare", choices = character(0), multiple = TRUE),
@@ -84,7 +177,8 @@ tagList(
                    condition = "input.dstain_show_overlay",
                    sliderInput("dstain_overlay_opacity", "Overlay opacity", min = 0, max = 1, value = 0, step = 0.05)
                  ),
-                 actionButton("dstain_load_btn", "Load / Compare", class = "btn-primary")
+                 actionButton("dstain_load_btn", "Load / Compare", class = "btn-primary"),
+                 actionButton("dstain_reset_btn", "Reset", class = "btn-secondary", style = "margin-left:8px;")
                ),
                mainPanel(
                  width = 8,
@@ -118,7 +212,7 @@ tagList(
                  ),
                  conditionalPanel(
                    condition = "input.sdonor_subset_mode == 'metadata'",
-                   build_metadata_accordion("sdonor", donor_metadata)
+                   uiOutput("sdonor_metadata_accordion_ui")
                  ),
                  tags$hr(),
                  checkboxInput("sdonor_show_overlay", "Show mask/analysis overlay", value = FALSE),
@@ -126,7 +220,8 @@ tagList(
                    condition = "input.sdonor_show_overlay",
                    sliderInput("sdonor_overlay_opacity", "Overlay opacity", min = 0, max = 1, value = 0, step = 0.05)
                  ),
-                 actionButton("sdonor_load_btn", "Load / Compare", class = "btn-primary")
+                 actionButton("sdonor_load_btn", "Load / Compare", class = "btn-primary"),
+                 actionButton("sdonor_reset_btn", "Reset", class = "btn-secondary", style = "margin-left:8px;")
                ),
                mainPanel(
                  width = 8,
@@ -151,7 +246,7 @@ tagList(
                  checkboxInput("sregion_filter_donors", "Filter donors by metadata", value = FALSE),
                  conditionalPanel(
                    condition = "input.sregion_filter_donors",
-                   build_metadata_accordion("sregion", donor_metadata)
+                   uiOutput("sregion_metadata_accordion_ui")
                  ),
                  selectInput("sregion_stain", "Stain", choices = with_placeholder(character(0))),
                  selectInput("sregion_regions", "Regions to compare", choices = character(0), multiple = TRUE),
@@ -161,7 +256,8 @@ tagList(
                    condition = "input.sregion_show_overlay",
                    sliderInput("sregion_overlay_opacity", "Overlay opacity", min = 0, max = 1, value = 0, step = 0.05)
                  ),
-                 actionButton("sregion_load_btn", "Load / Compare", class = "btn-primary")
+                 actionButton("sregion_load_btn", "Load / Compare", class = "btn-primary"),
+                 actionButton("sregion_reset_btn", "Reset", class = "btn-secondary", style = "margin-left:8px;")
                ),
                mainPanel(
                  width = 8,
@@ -170,6 +266,36 @@ tagList(
                  uiOutput("sregion_annotation_ui"),
                  tags$div(style = "height:20px;"),
                  uiOutput("sregion_viewer_grid")  # shows a validation error here if nothing matches
+               )
+             )
+    ),
+    
+    # =========================================================================
+    # identify donors — dedicated page combining demographic, clinical, AND
+    # QNP filters (the only page where QNP shows up now) to find a set of
+    # donors of interest, which can then be pulled into the Compare Donors
+    # page (see its "Use donor set" button) or copied out directly.
+    # =========================================================================
+    tabPanel(filter_donors_tab_name,
+             sidebarLayout(
+               sidebarPanel(
+                 width = 4,
+                 actionButton("iddonors_reset_btn", "Reset filters", class = "btn-secondary", style = "margin-bottom:12px;"),
+                 uiOutput("identify_donors_metadata_accordion_ui"),
+                 uiOutput("identify_donors_qnp_accordion_ui")
+               ),
+               mainPanel(
+                 width = 8,
+                 h4("Matching donors"),
+                 textOutput("identify_donors_count_text"),
+                 uiOutput("identify_donors_zero_warning_ui"),
+                 div(
+                   style = "margin:12px 0; display:flex; gap:8px;",
+                   downloadButton("iddonors_download_btn", "Download table (.csv)", class = "btn-secondary"),
+                   uiOutput("iddonors_copy_list_btn_ui", inline = TRUE)
+                 ),
+                 helpText("Click a donor's name for all metadata, including QNP values."),
+                 uiOutput("identify_donors_table_ui")
                )
              )
     ),
