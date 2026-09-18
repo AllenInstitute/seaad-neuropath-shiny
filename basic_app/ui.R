@@ -36,7 +36,7 @@ tagList(
         "width:34px; height:34px; border-radius:50%; border:none;",
         sprintf("background:%s; color:#fff; font-size:16px; cursor:pointer;", metadata_chart_color)
       ),
-      shiny::icon("note-sticky")
+      bsicons::bs_icon("stickies")
     ),
     tags$div(
       id = "scratchpad_panel",
@@ -148,6 +148,8 @@ tagList(
                ),
                mainPanel(
                  width = 8,
+                 uiOutput("home_context_card"),
+                 tags$div(style = "height:10px;"),
                  uiOutput("home_annotation_ui"),
                  tags$div(style = "height:20px;"),
                  uiOutput("home_viewer_grid"),
@@ -184,11 +186,11 @@ tagList(
                ),
                mainPanel(
                  width = 8,
-                 sync_zoom_control("dstain_sync_zoom", default_checked = TRUE),
                  uiOutput("dstain_context_card"),   # only appears once Load has been clicked
-                 tags$div(style = "height:18px;"),  # space between the card and the annotation checkboxes
+                 tags$div(style = "height:10px;"),
+                 sync_zoom_control("dstain_sync_zoom", default_checked = TRUE),
                  uiOutput("dstain_annotation_ui"),
-                 tags$div(style = "height:20px;"),
+                 tags$div(style = "height:18px;"),
                  uiOutput("dstain_viewer_grid"),
                  tags$div(style = "height:10px;"),
                  uiOutput("dstain_reset_zoom_btn_ui")
@@ -207,13 +209,34 @@ tagList(
                  selectInput("sdonor_region", "Region", choices = with_placeholder(character(0))),
                  radioButtons(
                    "sdonor_subset_mode", "Donors",
-                   choices = c("All donors" = "all", "Select specific donors" = "manual", "Filter by metadata" = "metadata")
+                   choices = stats::setNames(
+                     c("manual", "random", "metadata"),
+                     c("Select specific donors", "Select donors at random", "Filter by metadata")
+                   ),
+                   selected = "manual"
                  ),
                  conditionalPanel(
                    condition = "input.sdonor_subset_mode == 'manual'",
                    # choices here are narrowed server-side to only donors that actually
                    # have this stain+region combination once both are picked.
-                   selectInput("sdonor_donors_manual", "Donors to compare", choices = donor_choices, multiple = TRUE)
+                   # maxItems enforces the cap natively (selectize simply won't
+                   # accept an 11th pick) — selectizeInput() (rather than
+                   # selectInput()) is what exposes that option.
+                   tags$div(
+                     style = "display:flex; align-items:center; gap:6px;",
+                     tags$strong("Donors to compare"),
+                     bslib::tooltip(tags$span(style = "color:#000;", bsicons::bs_icon("info-circle-fill")), tt_donor_compare_cap, placement = "right")
+                   ),
+                   selectizeInput(
+                     "sdonor_donors_manual", label = NULL,
+                     choices = donor_choices, multiple = TRUE,
+                     options = list(maxItems = donor_compare_cap)
+                   ),
+                   uiOutput("sdonor_manual_count_ui")
+                 ),
+                 conditionalPanel(
+                   condition = "input.sdonor_subset_mode == 'random'",
+                   sliderInput("sdonor_random_n", "Number of donors", min = donor_compare_min, max = donor_compare_cap, value = donor_compare_min, step = 1)
                  ),
                  conditionalPanel(
                    condition = "input.sdonor_subset_mode == 'metadata'",
@@ -230,11 +253,11 @@ tagList(
                ),
                mainPanel(
                  width = 8,
-                 sync_zoom_control("sdonor_sync_zoom", default_checked = TRUE),
                  uiOutput("sdonor_context_card"),
-                 tags$div(style = "height:18px;"),
+                 tags$div(style = "height:10px;"),
+                 sync_zoom_control("sdonor_sync_zoom", default_checked = TRUE),
                  uiOutput("sdonor_annotation_ui"),
-                 tags$div(style = "height:20px;"),
+                 tags$div(style = "height:18px;"),
                  uiOutput("sdonor_viewer_grid"),
                  tags$div(style = "height:10px;"),
                  uiOutput("sdonor_reset_zoom_btn_ui")
@@ -269,11 +292,11 @@ tagList(
                ),
                mainPanel(
                  width = 8,
-                 sync_zoom_control("sregion_sync_zoom", default_checked = FALSE),
                  uiOutput("sregion_context_card"),
-                 tags$div(style = "height:18px;"),
+                 tags$div(style = "height:10px;"),
+                 sync_zoom_control("sregion_sync_zoom", default_checked = FALSE),
                  uiOutput("sregion_annotation_ui"),
-                 tags$div(style = "height:20px;"),
+                 tags$div(style = "height:18px;"),
                  uiOutput("sregion_viewer_grid"),  # shows a validation error here if nothing matches
                  tags$div(style = "height:10px;"),
                  uiOutput("sregion_reset_zoom_btn_ui")
