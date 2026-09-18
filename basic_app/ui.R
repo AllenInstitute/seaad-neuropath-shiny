@@ -27,10 +27,10 @@ tagList(
         "display:flex; align-items:center; gap:4px;",
         sprintf("font-size:13px; font-weight:600; color:%s;", metadata_chart_color)
       ),
-      "Take notes", HTML("&rarr;")
+      lbl_scratchpad, HTML("&rarr;")
     ),
     tags$button(
-      type = "button", title = "Notes",
+      type = "button", title = lbl_scratchpad,
       onclick = "document.getElementById('scratchpad_panel').classList.toggle('scratchpad-hidden')",
       style = paste(
         "width:34px; height:34px; border-radius:50%; border:none;",
@@ -46,7 +46,7 @@ tagList(
         "background:#fff; border:1px solid #ddd; border-radius:8px;",
         "box-shadow:0 2px 10px rgba(0,0,0,0.25); padding:10px;"
       ),
-      strong("Notes"),
+      strong(lbl_scratchpad),
       textAreaInput("scratchpad_notes", NULL, rows = 8, width = "100%", resize = "vertical"),
       actionButton("scratchpad_reset_btn", "Clear", class = "btn-sm btn-secondary")
     )
@@ -117,7 +117,7 @@ tagList(
   ),
   
   navbarPage(
-    title = "SEA-AD Viewer",
+    title = lbl_app_title,
     theme = app_theme,
     id = "main_nav",  # lets server.R detect tab switches and reset every page
     
@@ -151,6 +151,8 @@ tagList(
                  uiOutput("home_annotation_ui"),
                  tags$div(style = "height:20px;"),
                  uiOutput("home_viewer_grid"),
+                 tags$div(style = "height:10px;"),
+                 uiOutput("home_reset_zoom_btn_ui"),
                  uiOutput("home_donor_metadata")
                )
              )
@@ -182,11 +184,14 @@ tagList(
                ),
                mainPanel(
                  width = 8,
+                 sync_zoom_control("dstain_sync_zoom", default_checked = TRUE),
                  uiOutput("dstain_context_card"),   # only appears once Load has been clicked
                  tags$div(style = "height:18px;"),  # space between the card and the annotation checkboxes
                  uiOutput("dstain_annotation_ui"),
                  tags$div(style = "height:20px;"),
-                 uiOutput("dstain_viewer_grid")
+                 uiOutput("dstain_viewer_grid"),
+                 tags$div(style = "height:10px;"),
+                 uiOutput("dstain_reset_zoom_btn_ui")
                )
              )
     ),
@@ -225,11 +230,14 @@ tagList(
                ),
                mainPanel(
                  width = 8,
+                 sync_zoom_control("sdonor_sync_zoom", default_checked = TRUE),
                  uiOutput("sdonor_context_card"),
                  tags$div(style = "height:18px;"),
                  uiOutput("sdonor_annotation_ui"),
                  tags$div(style = "height:20px;"),
-                 uiOutput("sdonor_viewer_grid")
+                 uiOutput("sdonor_viewer_grid"),
+                 tags$div(style = "height:10px;"),
+                 uiOutput("sdonor_reset_zoom_btn_ui")
                )
              )
     ),
@@ -261,11 +269,14 @@ tagList(
                ),
                mainPanel(
                  width = 8,
+                 sync_zoom_control("sregion_sync_zoom", default_checked = FALSE),
                  uiOutput("sregion_context_card"),
                  tags$div(style = "height:18px;"),
                  uiOutput("sregion_annotation_ui"),
                  tags$div(style = "height:20px;"),
-                 uiOutput("sregion_viewer_grid")  # shows a validation error here if nothing matches
+                 uiOutput("sregion_viewer_grid"),  # shows a validation error here if nothing matches
+                 tags$div(style = "height:10px;"),
+                 uiOutput("sregion_reset_zoom_btn_ui")
                )
              )
     ),
@@ -309,6 +320,35 @@ tagList(
   tags$script(HTML("
     // containerId -> { osd: OpenSeadragon instance, annotationGroups: [...], hiddenGroups: {} }
     var viewers = {};
+
+    // guards against infinite recursion: programmatically moving viewer B's
+    // viewport to match viewer A also fires B's own 'animation' handler,
+    // which would otherwise try to sync everyone AGAIN (including back to
+    // A). While this flag is true, syncViewportToGroup() is a no-op.
+    var isSyncingViewers = false;
+
+    // mirrors one viewer's zoom + pan center to every OTHER viewer in
+    // groupContainerIds. Syncs both, not just zoom — zoom alone wouldn't
+    // show the corresponding region across images if each was panned
+    // somewhere different first.
+    function syncViewportToGroup(sourceContainerId, groupContainerIds) {
+      if (isSyncingViewers) return;
+      var source = viewers[sourceContainerId];
+      if (!source || !source.osd) return;
+      var vp = source.osd.viewport;
+      var zoom = vp.getZoom();
+      var center = vp.getCenter();
+
+      isSyncingViewers = true;
+      groupContainerIds.forEach(function(id) {
+        if (id === sourceContainerId) return;
+        var v = viewers[id];
+        if (!v || !v.osd) return;
+        v.osd.viewport.zoomTo(zoom, null, true);
+        v.osd.viewport.panTo(center, true);
+      });
+      isSyncingViewers = false;
+    }
 
     // creates (once) the transparent svg layer used to draw annotation polygons on top of a viewer
     function ensureSvgOverlay(containerId) {
@@ -380,8 +420,26 @@ tagList(
       });
     }
 
+    // resets every currently tracked viewer back to its initial view.
+    // Triggered by any page's Reset image zoom button — harmless for
+    // viewers on a page that isn't the one currently visible.
+    Shiny.addCustomMessageHandler('resetZoom', function(message) {
+      Object.keys(viewers).forEach(function(id) {
+        var v = viewers[id];
+        if (v && v.osd) v.osd.viewport.goHome();
+      });
+    });
+
     // (re)creates an OpenSeadragon viewer per image spec sent from the server.
     Shiny.addCustomMessageHandler('loadImages', function(message) {
+      // all container ids in THIS batch (i.e. this page's grid) — the sync
+      // group a viewer propagates to. syncCheckboxId names the page's
+      // toggle checkbox, checked LIVE on every animation event below
+      // (rather than once here) — otherwise unchecking it after images
+      // are already loaded wouldn't take effect until reloading.
+      var groupContainerIds = (message.images || []).map(function(imgSpec) { return 'osd-' + imgSpec.id; });
+      var syncCheckboxId = message.syncCheckboxId;
+
       (message.images || []).forEach(function(imgSpec) {
         var containerId = 'osd-' + imgSpec.id;
         var container = document.getElementById(containerId);
@@ -408,7 +466,15 @@ tagList(
         });
         viewers[containerId].osd = osd;
 
-        osd.addHandler('animation', function() { redrawAnnotations(containerId); });
+        osd.addHandler('animation', function() {
+          redrawAnnotations(containerId);
+          // no checkbox id (e.g. Home, which has no toggle at all) is
+          // treated as sync-enabled — moot there anyway, since a single-
+          // image batch has no other viewer to propagate to.
+          var checkboxEl = syncCheckboxId ? document.getElementById(syncCheckboxId) : null;
+          var syncEnabled = checkboxEl ? checkboxEl.checked : true;
+          if (syncEnabled) syncViewportToGroup(containerId, groupContainerIds);
+        });
         osd.addHandler('open', function() { redrawAnnotations(containerId); });
         osd.addHandler('resize', function() { redrawAnnotations(containerId); });
 

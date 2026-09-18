@@ -899,7 +899,7 @@ build_identify_donors_qnp_accordion <- function() {
       shiny::uiOutput("iddonors_qnp_sliders_ui")
     )
   }
-  bslib::accordion(bslib::accordion_panel(title = "QNP", body), id = "iddonors_qnp_accordion", open = FALSE)
+  bslib::accordion(bslib::accordion_panel(title = hdg_qnp, body), id = "iddonors_qnp_accordion", open = FALSE)
 }
 
 # sets up every QNP-mode-dependent renderUI — called once per session.
@@ -1098,9 +1098,23 @@ identify_donors_export_data <- function(donor_ids) {
   merge(base, wide, by = "Donor", all.x = TRUE, sort = TRUE)
 }
 
-# every metadata value for ONE donor — demographic, clinical, and each QNP
-# row on record. This is the body of the click-a-donor-name popup; it is
-# not rendered inline anywhere on the page.
+# the "Sync zoom/pan across images" checkbox + info tooltip, identical on
+# all three comparison pages apart from id and default.
+sync_zoom_control <- function(id, default_checked) {
+  checkbox_attrs <- list(type = "checkbox", id = id, style = "margin:0;")
+  if (isTRUE(default_checked)) checkbox_attrs$checked <- NA  # NA renders the bare boolean HTML attribute; omitting it entirely leaves the box unchecked
+  
+  shiny::tagList(
+    shiny::tags$div(
+      style = "display:flex; align-items:center; gap:6px;",
+      bslib::tooltip(shiny::icon("circle-info"), tt_sync_zoom, placement = "right"),
+      do.call(shiny::tags$input, checkbox_attrs),
+      shiny::tags$label(`for` = id, style = "margin:0; cursor:pointer; font-weight:bold;", "Sync zoom/pan across images")
+    ),
+    shiny::tags$div(style = "height:10px;")
+  )
+}
+
 # shared style for the purple card-header look used across the donor
 # popup's Demographic/Clinical/QNP cards (previously copy-pasted three
 # times below, each with a hardcoded hex instead of referencing
@@ -1109,6 +1123,9 @@ purple_card_header_style <- function() {
   sprintf("background:%s; color:#fff; font-weight:600;", metadata_chart_color)
 }
 
+# every metadata value for ONE donor — demographic, clinical, and each QNP
+# row on record. This is the body of the click-a-donor-name popup; it is
+# not rendered inline anywhere on the page.
 render_donor_all_metadata <- function(donor_id) {
   row <- donor_metadata[donor_metadata$donor == donor_id, , drop = FALSE]
   if (nrow(row) == 0) return(shiny::p("No metadata found for this donor."))
@@ -1137,14 +1154,14 @@ render_donor_all_metadata <- function(donor_id) {
   qnp_section <- if (length(donor_regions) == 0) {
     bslib::card(
       style = "margin-bottom:10px;",
-      bslib::card_header("QNP", style = purple_card_header_style()),
+      bslib::card_header(hdg_qnp, style = purple_card_header_style()),
       bslib::card_body(shiny::p("No QNP data on record for this donor."))
     )
   } else {
     region_choices <- stats::setNames(donor_regions, vapply(donor_regions, prettify_region, character(1)))
     bslib::card(
       style = "margin-bottom:10px;",
-      bslib::card_header("QNP", style = purple_card_header_style()),
+      bslib::card_header(hdg_qnp, style = purple_card_header_style()),
       bslib::card_body(
         # one region per line (not inline) — click a region to see its
         # subregions below.
@@ -1228,7 +1245,7 @@ render_identify_donors_table <- function(donor_ids) {
             ),
             shiny::tags$span(
               style = sprintf("cursor:pointer; color:%s;", metadata_chart_color),
-              title = "Copy donor id",
+              title = tt_copy_donor_id,
               onclick = sprintf("copyTextRobust('%s', this)", donor_id),
               shiny::icon("copy")
             )
@@ -1484,7 +1501,7 @@ render_viewer_grid_ui <- function(entries, label_field = c("stain", "donor", "re
   })))
 }
 
-render_annotation_master_ui <- function(entries, id_prefix = "ann") {
+render_annotation_master_ui <- function(entries, id_prefix = "ann", varying_field = NULL) {
   if (length(entries) == 0) return(NULL)
   
   all_labels <- get_unique_annotation_labels(entries)
@@ -1492,36 +1509,75 @@ render_annotation_master_ui <- function(entries, id_prefix = "ann") {
   
   color_map <- build_annotation_color_map(all_labels)
   
-  shiny::tagList(
-    shiny::strong("Annotations:"),
+  # id_prefix keeps ids unique across pages — all four pages' checklists
+  # coexist in the DOM at once (navbarPage renders every tab up front), so
+  # two pages both showing a "Layer1" label would otherwise collide.
+  build_checkbox_row <- function(lab) {
+    cb_id <- paste0(id_prefix, "_toggle_", gsub("[^A-Za-z0-9]+", "_", lab))
+    # a plain "form-check" div — the same Bootstrap classes bslib's own
+    # checkboxInput() renders under the hood — so this looks identical to
+    # every other checkbox in the app, even though (unlike a real
+    # checkboxInput) it's purely client-side: toggling annotation
+    # visibility doesn't need a server round-trip at all.
     shiny::div(
-      style = "display:flex; flex-wrap:wrap; gap:40px; margin-top:12px;",
-      lapply(all_labels, function(lab) {
-        # id_prefix keeps ids unique across pages — all four pages' checklists
-        # coexist in the DOM at once (navbarPage renders every tab up front),
-        # so two pages both showing a "Layer1" label would otherwise collide.
-        cb_id <- paste0(id_prefix, "_toggle_", gsub("[^A-Za-z0-9]+", "_", lab))
-        # a plain "form-check" div — the same Bootstrap classes bslib's own
-        # checkboxInput() renders under the hood — so this looks identical
-        # to every other checkbox in the app, even though (unlike a real
-        # checkboxInput) it's purely client-side: toggling annotation
-        # visibility doesn't need a server round-trip at all.
-        shiny::div(
-          class = "form-check",
-          style = "display:flex; align-items:center; gap:6px;",
-          shiny::tags$input(
-            class = "form-check-input", type = "checkbox", id = cb_id,
-            style = "margin:0;",
-            onclick = sprintf("toggleAnnotationLabel('%s', this.checked)", lab)
-          ),
-          shiny::tags$label(class = "form-check-label", `for` = cb_id, style = "margin:0;", lab),
-          shiny::tags$span(style = sprintf(
-            "display:inline-block; width:18px; height:18px; border-radius:3px; background:%s; flex-shrink:0;",
-            color_map[[lab]]
-          ))
-        )
-      })
+      class = "form-check",
+      style = "display:flex; align-items:center; gap:6px;",
+      shiny::tags$input(
+        class = "form-check-input", type = "checkbox", id = cb_id,
+        style = "margin:0;",
+        onclick = sprintf("toggleAnnotationLabel('%s', this.checked)", lab)
+      ),
+      shiny::tags$label(class = "form-check-label", `for` = cb_id, style = "margin:0;", lab),
+      shiny::tags$span(style = sprintf(
+        "display:inline-block; width:18px; height:18px; border-radius:3px; background:%s; flex-shrink:0;",
+        color_map[[lab]]
+      ))
     )
+  }
+  
+  # row-gap (spacing between WRAPPED lines) cut to roughly an eighth of the
+  # original 40px; column-gap (spacing between items on the same line) is
+  # unchanged — the request was specifically about line-to-line spacing.
+  checkbox_group <- function(labels) {
+    shiny::div(style = "display:flex; flex-wrap:wrap; column-gap:40px; row-gap:5px; margin-top:8px;", lapply(labels, build_checkbox_row))
+  }
+  
+  # a label is "shared" only if EVERY entry that has any annotations at all
+  # actually has that exact label — entries with none don't count against
+  # it (nothing to compare there).
+  entry_label_sets <- Filter(function(x) length(x) > 0, lapply(entries, function(e) {
+    if (length(e$slot$annotation_files) == 0) return(character(0))
+    vapply(e$slot$annotation_files, function(f) f$name, character(1))
+  }))
+  shared_labels <- if (length(entry_label_sets) > 0) Reduce(intersect, entry_label_sets) else character(0)
+  specific_labels <- setdiff(all_labels, shared_labels)
+  
+  # flat list when there's nothing to distinguish — either every entry has
+  # the exact same annotations, or the page has no varying dimension to
+  # group the "specific" ones by (e.g. Home's single entry).
+  if (length(specific_labels) == 0 || is.null(varying_field)) {
+    return(shiny::tagList(shiny::h5(hdg_annotations), checkbox_group(all_labels)))
+  }
+  
+  # group the SPECIFIC labels by the actual value that has them (a real
+  # stain/donor/region name — not a generic "<dimension>-specific" bucket).
+  value_labels <- list()
+  for (e in entries) {
+    own_labels <- if (length(e$slot$annotation_files) > 0) vapply(e$slot$annotation_files, function(f) f$name, character(1)) else character(0)
+    own_specific <- intersect(own_labels, specific_labels)
+    if (length(own_specific) == 0) next
+    value_name <- if (identical(varying_field, "region")) prettify_region(e$region) else e[[varying_field]]
+    value_labels[[value_name]] <- union(value_labels[[value_name]] %||% character(0), own_specific)
+  }
+  
+  shiny::tagList(
+    shiny::h5(hdg_annotations),
+    # "If there are no shared annotations, do not show that heading" — so
+    # this section is skipped entirely rather than showing an empty one.
+    if (length(shared_labels) > 0) shiny::tagList(shiny::h6(hdg_shared), checkbox_group(shared_labels)),
+    shiny::tagList(lapply(names(value_labels), function(value_name) {
+      shiny::tagList(shiny::h6(value_name, style = "margin-top:14px;"), checkbox_group(value_labels[[value_name]]))
+    }))
   )
 }
 
@@ -1608,7 +1664,7 @@ render_donor_metadata_qnp_block <- function(donor_id, image_region, image_stain)
   if (is.null(qnp_region) || is.null(stain_groups)) {
     return(shiny::tagList(
       shiny::tags$hr(),
-      shiny::strong("QNP"),
+      shiny::strong(hdg_qnp),
       shiny::p(style = "font-size:0.85em; color:#888;",
                "No QNP crosswalk entry for this region/stain — see qnp_region_crosswalk/qnp_stain_crosswalk in global.R.")
     ))
@@ -1618,12 +1674,12 @@ render_donor_metadata_qnp_block <- function(donor_id, image_region, image_stain)
   fields <- Filter(function(f) f$stain_group %in% stain_groups, qnp_fields_all)
   
   if (nrow(rows) == 0 || length(fields) == 0) {
-    return(shiny::tagList(shiny::tags$hr(), shiny::strong("QNP"), shiny::p("No QNP data on record for this donor/region/stain.")))
+    return(shiny::tagList(shiny::tags$hr(), shiny::strong(hdg_qnp), shiny::p("No QNP data on record for this donor/region/stain.")))
   }
   
   shiny::tagList(
     shiny::tags$hr(),
-    shiny::strong("QNP"),
+    shiny::strong(hdg_qnp),
     shiny::tagList(lapply(seq_len(nrow(rows)), function(i) {
       r <- rows[i, , drop = FALSE]
       vals <- Filter(Negate(is.null), lapply(fields, function(f) {

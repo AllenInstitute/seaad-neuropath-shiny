@@ -7,7 +7,7 @@ function(input, output, session) {
     tags$a(
       href = "javascript:void(0)",
       onclick = "window.scrollTo({top: 0, behavior: 'smooth'})",
-      title = "Back to top",
+      title = tt_back_to_top,
       style = paste(
         "position:fixed;", side, "bottom:24px; z-index:1050;",
         "width:42px; height:42px; border-radius:50%;",
@@ -25,6 +25,16 @@ function(input, output, session) {
   observeEvent(input$scratchpad_reset_btn, {
     updateTextAreaInput(session, "scratchpad_notes", value = "")
   })
+  
+  # Reset image zoom — purely a client-side action (resetting OpenSeadragon
+  # viewports), so all four pages' buttons just trigger the same JS message;
+  # see the 'resetZoom' handler in ui.r, which resets every currently
+  # tracked viewer regardless of which page's button was clicked. Harmless
+  # for viewers on a page that isn't currently visible.
+  observeEvent(input$home_reset_zoom_btn,    { session$sendCustomMessage("resetZoom", list()) })
+  observeEvent(input$dstain_reset_zoom_btn,  { session$sendCustomMessage("resetZoom", list()) })
+  observeEvent(input$sdonor_reset_zoom_btn,  { session$sendCustomMessage("resetZoom", list()) })
+  observeEvent(input$sregion_reset_zoom_btn, { session$sendCustomMessage("resetZoom", list()) })
   
   # small styled card summarizing a comparison page's two FIXED (non-varying)
   # fields. built from the loaded entries (not the live dropdown values) so it
@@ -129,6 +139,12 @@ function(input, output, session) {
     render_donor_metadata_card(entries[[1]]$donor)
   })
   
+  output$home_reset_zoom_btn_ui <- renderUI({
+    req(length(home_entries_rv()) > 0)
+    actionButton("home_reset_zoom_btn", lbl_reset_image_zoom,
+                 style = "background-color:#000; border-color:#000; color:#fff; font-size:16px;")
+  })
+  
   observeEvent(input$home_load_btn, {
     req(input$home_donor, input$home_region, input$home_stain,
         nzchar(input$home_donor), nzchar(input$home_region), nzchar(input$home_stain))
@@ -190,7 +206,13 @@ function(input, output, session) {
     constraint_card("Donor" = e1$donor, "Region" = prettify_region(e1$region))
   })
   
-  output$dstain_annotation_ui <- renderUI({ render_annotation_master_ui(dstain_entries_rv(), id_prefix = "dstain") })
+  output$dstain_reset_zoom_btn_ui <- renderUI({
+    req(length(dstain_entries_rv()) > 0)
+    actionButton("dstain_reset_zoom_btn", lbl_reset_image_zoom,
+                 style = "background-color:#000; border-color:#000; color:#fff; font-size:16px;")
+  })
+  
+  output$dstain_annotation_ui <- renderUI({ render_annotation_master_ui(dstain_entries_rv(), id_prefix = "dstain", varying_field = "stain") })
   output$dstain_viewer_grid   <- renderUI({ render_viewer_grid_ui(dstain_entries_rv(), label_field = "stain") })
   
   observeEvent(input$dstain_load_btn, {
@@ -214,7 +236,11 @@ function(input, output, session) {
                              shiny::setProgress(value = done / total, detail = sprintf("Fetching annotations: %d of %d", done, total))
                            })
     })
-    session$onFlushed(function() session$sendCustomMessage("loadImages", list(images = images)), once = TRUE)
+    # syncCheckboxId names the checkbox for the JS to check LIVE on every
+    # zoom/pan event, rather than a fixed value baked in at load time —
+    # that's what lets unchecking it after images are already loaded take
+    # effect immediately, with no reload needed.
+    session$onFlushed(function() session$sendCustomMessage("loadImages", list(images = images, syncCheckboxId = "dstain_sync_zoom")), once = TRUE)
   })
   
   # ===========================================================================
@@ -248,7 +274,13 @@ function(input, output, session) {
     constraint_card("Stain" = e1$stain, "Region" = prettify_region(e1$region))
   })
   
-  output$sdonor_annotation_ui <- renderUI({ render_annotation_master_ui(sdonor_entries_rv(), id_prefix = "sdonor") })
+  output$sdonor_reset_zoom_btn_ui <- renderUI({
+    req(length(sdonor_entries_rv()) > 0)
+    actionButton("sdonor_reset_zoom_btn", lbl_reset_image_zoom,
+                 style = "background-color:#000; border-color:#000; color:#fff; font-size:16px;")
+  })
+  
+  output$sdonor_annotation_ui <- renderUI({ render_annotation_master_ui(sdonor_entries_rv(), id_prefix = "sdonor", varying_field = "donor") })
   output$sdonor_viewer_grid   <- renderUI({ render_viewer_grid_ui(sdonor_entries_rv(), label_field = "donor", show_donor_info = TRUE) })
   
   observeEvent(input$sdonor_load_btn, {
@@ -277,7 +309,11 @@ function(input, output, session) {
                              shiny::setProgress(value = done / total, detail = sprintf("Fetching annotations: %d of %d", done, total))
                            })
     })
-    session$onFlushed(function() session$sendCustomMessage("loadImages", list(images = images)), once = TRUE)
+    # syncCheckboxId names the checkbox for the JS to check LIVE on every
+    # zoom/pan event, rather than a fixed value baked in at load time —
+    # that's what lets unchecking it after images are already loaded take
+    # effect immediately, with no reload needed.
+    session$onFlushed(function() session$sendCustomMessage("loadImages", list(images = images, syncCheckboxId = "sdonor_sync_zoom")), once = TRUE)
   })
   
   # ===========================================================================
@@ -319,7 +355,13 @@ function(input, output, session) {
     constraint_card("Donor" = e1$donor, "Stain" = e1$stain)
   })
   
-  output$sregion_annotation_ui <- renderUI({ render_annotation_master_ui(sregion_entries_rv(), id_prefix = "sregion") })
+  output$sregion_reset_zoom_btn_ui <- renderUI({
+    req(length(sregion_entries_rv()) > 0)
+    actionButton("sregion_reset_zoom_btn", lbl_reset_image_zoom,
+                 style = "background-color:#000; border-color:#000; color:#fff; font-size:16px;")
+  })
+  
+  output$sregion_annotation_ui <- renderUI({ render_annotation_master_ui(sregion_entries_rv(), id_prefix = "sregion", varying_field = "region") })
   output$sregion_viewer_grid   <- renderUI({ render_viewer_grid_ui(sregion_entries_rv(), label_field = "region") })
   
   observeEvent(input$sregion_load_btn, {
@@ -343,7 +385,11 @@ function(input, output, session) {
                              shiny::setProgress(value = done / total, detail = sprintf("Fetching annotations: %d of %d", done, total))
                            })
     })
-    session$onFlushed(function() session$sendCustomMessage("loadImages", list(images = images)), once = TRUE)
+    # syncCheckboxId names the checkbox for the JS to check LIVE on every
+    # zoom/pan event, rather than a fixed value baked in at load time —
+    # that's what lets unchecking it after images are already loaded take
+    # effect immediately, with no reload needed.
+    session$onFlushed(function() session$sendCustomMessage("loadImages", list(images = images, syncCheckboxId = "sregion_sync_zoom")), once = TRUE)
   })
   
   # ===========================================================================
@@ -363,7 +409,7 @@ function(input, output, session) {
     reset_identify_donors_filters(input, session, iddonors_baselines)
     bslib::accordion_panel_close("iddonors_meta_accordion", TRUE, session = session)
     bslib::accordion_panel_close("iddonors_qnp_accordion", TRUE, session = session)
-    showNotification("Filters reset.", type = "message")
+    showNotification(msg_filters_reset, type = "message")
   })
   
   output$identify_donors_metadata_accordion_ui <- renderUI({
@@ -487,6 +533,7 @@ function(input, output, session) {
     updateSelectInput(session, "dstain_stains", choices = character(0), selected = character(0))
     updateCheckboxInput(session, "dstain_show_overlay", value = FALSE)
     updateSliderInput(session, "dstain_overlay_opacity", value = 0)
+    updateCheckboxInput(session, "dstain_sync_zoom", value = TRUE)
   }
   
   reset_sdonor_page <- function() {
@@ -497,6 +544,7 @@ function(input, output, session) {
     updateSelectInput(session, "sdonor_donors_manual", choices = donor_choices, selected = character(0))
     updateCheckboxInput(session, "sdonor_show_overlay", value = FALSE)
     updateSliderInput(session, "sdonor_overlay_opacity", value = 0)
+    updateCheckboxInput(session, "sdonor_sync_zoom", value = TRUE)
   }
   
   reset_sregion_page <- function() {
@@ -507,12 +555,13 @@ function(input, output, session) {
     updateSelectInput(session, "sregion_regions", choices = character(0), selected = character(0))
     updateCheckboxInput(session, "sregion_show_overlay", value = FALSE)
     updateSliderInput(session, "sregion_overlay_opacity", value = 0)
+    updateCheckboxInput(session, "sregion_sync_zoom", value = FALSE)
   }
   
-  observeEvent(input$home_reset_btn,    { reset_home_page();    showNotification("Page reset.", type = "message") })
-  observeEvent(input$dstain_reset_btn,  { reset_dstain_page();  showNotification("Page reset.", type = "message") })
-  observeEvent(input$sdonor_reset_btn,  { reset_sdonor_page();  showNotification("Page reset.", type = "message") })
-  observeEvent(input$sregion_reset_btn, { reset_sregion_page(); showNotification("Page reset.", type = "message") })
+  observeEvent(input$home_reset_btn,    { reset_home_page();    showNotification(msg_page_reset, type = "message") })
+  observeEvent(input$dstain_reset_btn,  { reset_dstain_page();  showNotification(msg_page_reset, type = "message") })
+  observeEvent(input$sdonor_reset_btn,  { reset_sdonor_page();  showNotification(msg_page_reset, type = "message") })
+  observeEvent(input$sregion_reset_btn, { reset_sregion_page(); showNotification(msg_page_reset, type = "message") })
   
   observeEvent(input$main_nav, {
     reset_home_page()
