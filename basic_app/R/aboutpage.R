@@ -25,7 +25,12 @@ about_tab_ui <- function() {
                "Annotation checkboxes only fetch their underlying file the first time they're switched on."),
              
              h4("Relevant Publications"),
-             p("App developed by Irika R. Sinha. Claude Sonnet 5 and OpenAI GPT-5.6 Sol were used to develop and troubleshoot code."),
+             p("See: ", a("https://brain-map.org/consortia/sea-ad/our-science", href="https://brain-map.org/consortia/sea-ad/our-science", target = "_blank")),
+             p(strong("Quantitative neuropathology (QNP) values from:"), br(), 
+             "Multiregional single-cell profiling reveals shared andspecialized cellular vulnerability in Alzheimer’s disease", 
+             a("(Travaglini,Gabitto, Ding, et al., bioRxiv, 2026)", href = "https://doi.org/10.64898/2026.07.01.734821", target = "_blank"), br(),
+             "The Caudate Nucleus Exhibits Distinct Pathology and Cell Type-Specific Responses Across Alzheimer’s Disease",
+             a("(Kana et al., bioRxiv, 2026)", href = "https://www.biorxiv.org/content/10.64898/2026.01.10.694705v2", target = "_blank")),
              
              h4("Acknowledgements"),
              p("App developed by Irika R. Sinha. Claude Sonnet 5 and OpenAI GPT-5.6 Sol were used to develop and troubleshoot code."),
