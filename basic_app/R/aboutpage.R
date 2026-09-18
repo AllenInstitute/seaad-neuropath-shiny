@@ -22,7 +22,8 @@ about_tab_ui <- function() {
              h4("Usage"),
              p("Pick a donor, region, and stain on the Home tab to view a single slide, ",
                "or use one of the Compare tabs to view several images side by side. ",
-               "Annotation checkboxes only fetch their underlying file the first time they're switched on."),
+               "Use the Filter Donors page to use quantitative neuropathology values to subset donors.",
+               "Copy donor IDs into the notes box in the top right and use in compare pages to specify donors of interest."),
              
              h4("Relevant Publications"),
              p("See: ", a("https://brain-map.org/consortia/sea-ad/our-science", href="https://brain-map.org/consortia/sea-ad/our-science", target = "_blank")),
