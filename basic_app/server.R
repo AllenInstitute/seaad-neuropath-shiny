@@ -1,5 +1,31 @@
 function(input, output, session) {
   
+  # scroll-to-top arrow: left side on Filter Donors (per request), right
+  # side on every other page.
+  output$scroll_top_arrow_ui <- renderUI({
+    side <- if (identical(input$main_nav, "Filter Donors")) "left:18px;" else "right:18px;"
+    tags$a(
+      href = "javascript:void(0)",
+      onclick = "window.scrollTo({top: 0, behavior: 'smooth'})",
+      title = "Back to top",
+      style = paste(
+        "position:fixed;", side, "bottom:24px; z-index:1050;",
+        "width:42px; height:42px; border-radius:50%;",
+        "background:#7952b3; color:#fff; text-decoration:none;",
+        "display:flex; align-items:center; justify-content:center;",
+        "font-size:20px; line-height:1; box-shadow:0 2px 6px rgba(0,0,0,0.3);"
+      ),
+      HTML("&uarr;")
+    )
+  })
+  
+  # scratchpad's only server-side logic — Clear just blanks the textarea.
+  # Its value otherwise persists across tab switches for free (see the
+  # comment in ui.r): nothing here resets it on tab change, deliberately.
+  observeEvent(input$scratchpad_reset_btn, {
+    updateTextAreaInput(session, "scratchpad_notes", value = "")
+  })
+  
   # small styled card summarizing a comparison page's two FIXED (non-varying)
   # fields. built from the loaded entries (not the live dropdown values) so it
   # only appears once Load has actually been clicked — see req(length(...)>0).
@@ -332,6 +358,8 @@ function(input, output, session) {
   
   observeEvent(input$iddonors_reset_btn, {
     reset_identify_donors_filters(input, session, iddonors_baselines)
+    bslib::accordion_panel_close("iddonors_meta_accordion", TRUE, session = session)
+    bslib::accordion_panel_close("iddonors_qnp_accordion", TRUE, session = session)
     showNotification("Filters reset.", type = "message")
   })
   
@@ -391,16 +419,7 @@ function(input, output, session) {
     req(is_selected(donor_id))
     iddonors_popup_donor(donor_id)
     showModal(modalDialog(
-      title = div(
-        style = "display:flex; justify-content:space-between; align-items:center;",
-        span(donor_id),
-        tags$span(
-          shiny::icon("times"),
-          style = "cursor:pointer; font-size:18px;",
-          title = "Close",
-          onclick = "Shiny.setInputValue('iddonors_popup_close', Math.random(), {priority: 'event'})"
-        )
-      ),
+      title = donor_id,
       render_donor_all_metadata(donor_id),
       easyClose = TRUE,
       size = "l",
@@ -408,18 +427,28 @@ function(input, output, session) {
     ))
   })
   
-  observeEvent(input$iddonors_popup_close, { removeModal() })
-  
   # the region-dependent half of the popup — rebuilt whenever the radio
   # inside the (currently open) modal changes.
   output$iddonors_popup_qnp_ui <- renderUI({
     donor_id <- iddonors_popup_donor()
     req(is_selected(donor_id), is_selected(input$iddonors_popup_region_sel))
-    render_donor_qnp_region_detail(donor_id, input$iddonors_popup_region_sel)
+    view_mode <- input$iddonors_popup_qnp_view_mode %||% "layers"
+    render_donor_qnp_region_detail(donor_id, input$iddonors_popup_region_sel, view_mode)
   })
   
   # kept only as a hidden text source for the page's Copy button.
-  output$identify_donors_list_text <- renderText({ paste(sort(identify_matching_donors()), collapse = ", ") })
+  # the copy text is baked directly into the button's data attribute at
+  # render time — simpler than reading a hidden DOM element's text at
+  # click time, and removes the possibility of that element not yet being
+  # populated when clicked.
+  output$iddonors_copy_list_btn_ui <- renderUI({
+    list_text <- paste(sort(identify_matching_donors()), collapse = ", ")
+    tags$button(
+      "Copy donor list", class = "btn btn-secondary",
+      `data-copy-text` = list_text,
+      onclick = "copyTextRobust(this.getAttribute('data-copy-text'), this)"
+    )
+  })
   
   # ===========================================================================
   # about page — defined in R/aboutpage.R, edited independently of this file.

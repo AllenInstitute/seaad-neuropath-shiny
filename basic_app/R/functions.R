@@ -525,7 +525,7 @@ load_specimen_metadata_csv <- function(path, donor_id_column = "Donor ID") {
 # ---------------------------------------------------------------------------
 
 empty_qnp_metadata <- function() {
-  df <- data.frame(donor = character(0), region = character(0), subregion = character(0),
+  df <- data.frame(donor = character(0), region_grouping = character(0), region = character(0), subregion = character(0),
                    stringsAsFactors = FALSE)
   for (f in qnp_fields) df[[f$id]] <- numeric(0)
   df
@@ -556,6 +556,16 @@ load_qnp_metadata_csv <- function(path) {
     subregion = df[[qnp_subregion_column]],
     stringsAsFactors = FALSE
   )
+  
+  # region_grouping is optional — falls back to region itself (a 1:1
+  # grouping) when the configured column isn't actually in the csv, so a
+  # wrong/unconfirmed qnp_region_grouping_column degrades gracefully
+  # instead of breaking anything.
+  out$region_grouping <- if (!is.null(qnp_region_grouping_column) && qnp_region_grouping_column %in% names(df)) {
+    df[[qnp_region_grouping_column]]
+  } else {
+    out$region
+  }
   
   for (f in qnp_fields) {
     col <- f$csv_column
@@ -638,6 +648,19 @@ qnp_field_display_label <- function(label) {
 qnp_region_has_multiple_subregions <- function(region) {
   subs <- qnp_by_region[[region]]
   !is.null(subs) && length(subs) > 1
+}
+
+# region_grouping -> region lookups, mirroring the region -> subregion
+# pattern above exactly (including the same "only show a selector when
+# there's more than one option" collapsing rule).
+get_qnp_groupings <- function() sort(unique(qnp_metadata$region_grouping))
+
+get_qnp_regions_in_grouping <- function(grouping) {
+  sort(unique(qnp_metadata$region[qnp_metadata$region_grouping == grouping]))
+}
+
+qnp_grouping_has_multiple_regions <- function(grouping) {
+  length(get_qnp_regions_in_grouping(grouping)) > 1
 }
 
 # which subregion key to use when we want "the region as a whole": the
@@ -738,8 +761,10 @@ build_iddonors_qnp_stain_sliders <- function(stain) {
 # subregion-or-Global selector.
 build_iddonors_qnp_region_controls <- function() {
   shiny::tagList(
-    shiny::selectInput("iddonors_qnp_region_sel", "Region", choices = with_placeholder(sort(names(qnp_by_region)))),
-    shiny::uiOutput("iddonors_qnp_subregion_ui")
+    shiny::selectInput("iddonors_qnp_grouping_sel", "Region group", choices = with_placeholder(get_qnp_groupings())),
+    shiny::uiOutput("iddonors_qnp_region_ui"),
+    shiny::uiOutput("iddonors_qnp_subregion_ui"),
+    shiny::checkboxInput("iddonors_qnp_hide_no_data", "Hide donors without QNP data for this region", value = TRUE)
   )
 }
 
@@ -764,6 +789,14 @@ apply_qnp_slider_filter <- function(donors, region, subregion_choice, f, input, 
 }
 
 # region mode's filter: the one selected region+subregion, all stains.
+# TRUE for donors who have AT LEAST ONE QNP row for the given region (any
+# subregion) — powers the "hide donors without QNP data" checkbox.
+donors_with_qnp_data_for_region <- function(region) {
+  subs <- qnp_by_region[[region]]
+  if (is.null(subs)) return(character(0))
+  unique(do.call(rbind, subs)$donor)
+}
+
 filter_donors_identify_qnp_region_mode <- function(input, store) {
   region <- input$iddonors_qnp_region_sel
   subregion_choice <- input$iddonors_qnp_subregion_sel
@@ -771,6 +804,14 @@ filter_donors_identify_qnp_region_mode <- function(input, store) {
   
   donors <- donor_choices
   for (f in qnp_fields) donors <- apply_qnp_slider_filter(donors, region, subregion_choice, f, input, store)
+  
+  # default TRUE (checkboxInput's own default, and also enforced here via
+  # %||% in case the widget hasn't been built yet) — donors never measured
+  # in this region at all are hidden unless explicitly unchecked.
+  hide_no_data <- isTRUE(input$iddonors_qnp_hide_no_data) || is.null(input$iddonors_qnp_hide_no_data)
+  if (hide_no_data) {
+    donors <- intersect(donors, donors_with_qnp_data_for_region(region))
+  }
   donors
 }
 
@@ -830,7 +871,10 @@ build_identify_donors_metadata_accordion <- function() {
 }
 
 # the QNP accordion: one panel whose body is the mode radio + dynamic
-# controls + the multi-column cards.
+# controls + the multi-column sliders. Always the filtering/slider view —
+# global-vs-specific-subregion is chosen later, via the subregion
+# selector's own "Global (average)" option (see
+# register_identify_donors_qnp()'s iddonors_qnp_subregion_ui below).
 build_identify_donors_qnp_accordion <- function() {
   body <- if (length(qnp_by_region) == 0) {
     shiny::helpText("No QNP data loaded yet.")
@@ -851,6 +895,22 @@ build_identify_donors_qnp_accordion <- function() {
 register_identify_donors_qnp <- function(output, input) {
   output$iddonors_qnp_mode_ui <- shiny::renderUI({
     if (identical(input$iddonors_qnp_mode, "stain")) build_iddonors_qnp_stain_controls() else build_iddonors_qnp_region_controls()
+  })
+  
+  output$iddonors_qnp_region_ui <- shiny::renderUI({
+    shiny::req(is_selected(input$iddonors_qnp_grouping_sel))
+    grouping <- input$iddonors_qnp_grouping_sel
+    regions <- get_qnp_regions_in_grouping(grouping)
+    if (!qnp_grouping_has_multiple_regions(grouping)) {
+      # nothing to disambiguate — still a REAL selectInput (hidden inside
+      # our own div, not fought with Shiny's internals) so downstream code
+      # that reads iddonors_qnp_region_sel works identically either way.
+      return(shiny::tags$div(
+        style = "display:none;",
+        shiny::selectInput("iddonors_qnp_region_sel", NULL, choices = regions, selected = if (length(regions) == 1) regions[1] else NULL)
+      ))
+    }
+    shiny::selectInput("iddonors_qnp_region_sel", "Region", choices = with_placeholder(regions))
   })
   
   output$iddonors_qnp_subregion_ui <- shiny::renderUI({
@@ -916,6 +976,8 @@ filter_donors_identify_page <- function(input, store) {
 reset_identify_donors_filters <- function(input, session, store) {
   rm(list = ls(envir = store, all.names = TRUE), envir = store)
   
+  shiny::updateCheckboxInput(session, "iddonors_qnp_hide_no_data", value = TRUE)
+  
   for (f in metadata_fields) {
     if (f$type == "range") {
       rng <- suppressWarnings(range(donor_metadata[[f$id]], na.rm = TRUE))
@@ -957,8 +1019,9 @@ reset_identify_donors_filters <- function(input, session, store) {
 
 # every metadata column for the matching donors, ready for display or
 # download — all of donor_metadata's fields, donor id first.
-identify_donors_table_data <- function(donor_ids) {
-  cols <- c("donor", vapply(metadata_fields, function(f) f$id, character(1)))
+identify_donors_table_data <- function(donor_ids, exclude_ids = character(0)) {
+  field_ids <- setdiff(vapply(metadata_fields, function(f) f$id, character(1)), exclude_ids)
+  cols <- c("donor", field_ids)
   cols <- intersect(cols, names(donor_metadata))
   df <- donor_metadata[donor_metadata$donor %in% donor_ids, cols, drop = FALSE]
   df <- df[order(df$donor), , drop = FALSE]
@@ -1053,52 +1116,74 @@ render_donor_all_metadata <- function(donor_id) {
   
   donor_regions <- sort(unique(qnp_metadata$region[qnp_metadata$donor == donor_id]))
   qnp_section <- if (length(donor_regions) == 0) {
-    shiny::tagList(shiny::tags$hr(), shiny::strong("QNP"), shiny::p("No QNP data on record for this donor."))
+    bslib::card(
+      style = "margin-bottom:10px;",
+      bslib::card_header("QNP", style = "background:#7952b3; color:#fff; font-weight:600;"),
+      bslib::card_body(shiny::p("No QNP data on record for this donor."))
+    )
   } else {
     region_choices <- stats::setNames(donor_regions, vapply(donor_regions, prettify_region, character(1)))
-    shiny::tagList(
-      shiny::tags$hr(),
-      shiny::strong("QNP — click a region:"),
-      shiny::radioButtons("iddonors_popup_region_sel", NULL, choices = region_choices, selected = donor_regions[1], inline = TRUE),
-      shiny::uiOutput("iddonors_popup_qnp_ui")
+    bslib::card(
+      style = "margin-bottom:10px;",
+      bslib::card_header("QNP", style = "background:#7952b3; color:#fff; font-weight:600;"),
+      bslib::card_body(
+        # one region per line (not inline) — click a region to see its
+        # subregions below.
+        shiny::radioButtons("iddonors_popup_region_sel", NULL, choices = region_choices, selected = donor_regions[1], inline = FALSE),
+        shiny::radioButtons(
+          "iddonors_popup_qnp_view_mode", "Show QNP as:",
+          choices = c("Global average (% only)" = "global", "All values by layer" = "layers"),
+          selected = "layers", inline = TRUE
+        ),
+        shiny::uiOutput("iddonors_popup_qnp_ui")
+      )
     )
   }
   
   shiny::tagList(group_cards, qnp_section)
 }
 
-# one region's QNP detail for the popup: the region name as a BIG heading,
-# then every subregion (layer) it has, each with its own sub-heading and
-# bold-label/plain-value measures underneath.
-render_donor_qnp_region_detail <- function(donor_id, region) {
+# one region's QNP detail for the popup.
+# view_mode "layers": every subregion (layer) as its own card, every
+#   measure (qnp_fields_all).
+# view_mode "global": ONE card — every percent-type field (qnp_fields,
+#   already percent-only), averaged across this donor's subregions in
+#   this region.
+render_donor_qnp_region_detail <- function(donor_id, region, view_mode = "layers") {
   rows <- qnp_metadata[qnp_metadata$donor == donor_id & qnp_metadata$region == region, , drop = FALSE]
   if (nrow(rows) == 0) return(shiny::p("No QNP data on record for this donor in this region."))
   
-  single_subregion <- nrow(rows) == 1
-  
-  shiny::tagList(
-    shiny::h4(prettify_region(region), style = "margin-top:12px; color:#7952b3;"),
-    shiny::tagList(lapply(seq_len(nrow(rows)), function(i) {
-      r <- rows[i, , drop = FALSE]
-      vals <- Filter(Negate(is.null), lapply(qnp_fields_all, function(f) {
-        v <- r[[f$id]]
-        if (is.null(v) || is.na(v)) return(NULL)
-        shiny::tags$div(shiny::tags$strong(paste0(f$label, ": ")), shiny::tags$span(signif(v, 4)))
-      }))
-      if (length(vals) == 0) return(NULL)
-      shiny::tags$div(
-        style = "margin:8px 0; padding:8px; background:#f6f2fb; border-radius:4px;",
-        if (!single_subregion) shiny::h6(r$subregion, style = "margin-bottom:4px;"),
-        vals
-      )
+  if (identical(view_mode, "global")) {
+    vals <- Filter(Negate(is.null), lapply(qnp_fields, function(f) {
+      v <- mean(rows[[f$id]], na.rm = TRUE)
+      if (is.na(v)) return(NULL)
+      shiny::tags$div(shiny::tags$strong(paste0(qnp_field_display_label(f$label), ": ")), shiny::tags$span(signif(v, 4)))
     }))
-  )
+    if (length(vals) == 0) return(shiny::p("No percent-field data for this donor/region."))
+    return(bslib::card(bslib::card_body(vals)))
+  }
+  
+  cards <- lapply(seq_len(nrow(rows)), function(i) {
+    r <- rows[i, , drop = FALSE]
+    vals <- Filter(Negate(is.null), lapply(qnp_fields_all, function(f) {
+      v <- r[[f$id]]
+      if (is.null(v) || is.na(v)) return(NULL)
+      shiny::tags$div(shiny::tags$strong(paste0(f$label, ": ")), shiny::tags$span(signif(v, 4)))
+    }))
+    if (length(vals) == 0) return(NULL)
+    bslib::card(
+      style = "margin-bottom:8px;",
+      bslib::card_header(r$subregion),
+      bslib::card_body(vals)
+    )
+  })
+  shiny::tagList(Filter(Negate(is.null), cards))
 }
 
 # a plain HTML table of the full metadata for every matching donor.
 render_identify_donors_table <- function(donor_ids) {
   if (length(donor_ids) == 0) return(shiny::helpText("No donors match the current filters."))
-  df <- identify_donors_table_data(donor_ids)
+  df <- identify_donors_table_data(donor_ids, exclude_ids = c("years_education", "thal_phase", "braak_stage"))
   
   header <- shiny::tags$tr(lapply(names(df), shiny::tags$th))
   rows <- lapply(seq_len(nrow(df)), function(i) {
@@ -1110,16 +1195,19 @@ render_identify_donors_table <- function(donor_ids) {
       if (identical(nm, "Donor")) {
         donor_id <- as.character(df[i, nm])
         shiny::tags$td(
-          shiny::tags$a(
-            href = "javascript:void(0)",
-            onclick = sprintf("Shiny.setInputValue('iddonors_clicked_donor', '%s', {priority: 'event'})", donor_id),
-            donor_id
-          ),
-          shiny::tags$span(
-            style = "cursor:pointer; color:#7952b3; margin-left:6px;",
-            title = "Copy donor id",
-            onclick = sprintf("copyTextRobust('%s')", donor_id),
-            shiny::icon("copy")
+          shiny::tags$div(
+            style = "display:flex; align-items:center; gap:6px; white-space:nowrap;",
+            shiny::tags$a(
+              href = "javascript:void(0)",
+              onclick = sprintf("Shiny.setInputValue('iddonors_clicked_donor', '%s', {priority: 'event'})", donor_id),
+              donor_id
+            ),
+            shiny::tags$span(
+              style = "cursor:pointer; color:#7952b3;",
+              title = "Copy donor id",
+              onclick = sprintf("copyTextRobust('%s', this)", donor_id),
+              shiny::icon("copy")
+            )
           )
         )
       } else {

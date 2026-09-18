@@ -184,10 +184,15 @@ qnp_fields <- list(
        stain_group = "NeuN", csv_column = "percent NeuN positive area")
 )
 
-# donor/region/subregion column headers in the QNP csv (edit if different).
-qnp_donor_column     <- "Donor ID"
-qnp_region_column     <- "region"
-qnp_subregion_column <- "analysis region"
+# donor/region_grouping/region/subregion column headers in the QNP csv
+# (edit to match your real csv). region_grouping is OPTIONAL: if this
+# column doesn't exist, region_grouping just falls back to equal region
+# (see load_qnp_metadata_csv()), so the app still works with a 2-level
+# hierarchy until you confirm the real column name here.
+qnp_donor_column           <- "Donor ID"
+qnp_region_grouping_column <- "region"  
+qnp_region_column           <- "brain region"
+qnp_subregion_column       <- "analysis region"
 
 qnp_metadata_csv_path <- "ins/QNPMetadata.csv"  # <- point this at your real QNP csv
 
@@ -217,6 +222,39 @@ qnp_fields <- lapply(qnp_fields, function(f) { f$type <- "range"; f })
 # narrowed qnp_fields. (qnp_metadata itself was loaded above with all of
 # these columns, so the underlying data is all there either way.)
 qnp_fields_all <- qnp_fields
+
+# ---------------------------------------------------------------------------
+# Crosswalks between the IMAGE MANIFEST's region/stain naming (what
+# donor_manifest/entries use, e.g. "dorsolateral-prefrontal-cortex") and
+# QNP's own naming (qnp_metadata$region, and qnp_fields' stain_group).
+# Used by the Compare Donors popover to find the right QNP rows for the
+# region+stain currently being viewed there.
+#
+# THESE ARE BEST-EFFORT GUESSES, not confirmed against your real QNP csv.
+# The region crosswalk's right-hand side defaults to the same slug as a
+# safe no-op placeholder — run `sort(unique(qnp_metadata$region))` once you
+# have real data and correct the right-hand side of any that don't match.
+# The stain crosswalk is grounded in inventory_manifest.R's own
+# stain_type naming (case_when block), mapping each combined-image stain
+# to every qnp_fields stain_group it actually covers — e.g. the combined
+# "Abeta (6E10) and IBA1" image includes measures from BOTH the 6E10 and
+# Iba1 (and their colocalization) QNP stain groups.
+# ---------------------------------------------------------------------------
+qnp_region_crosswalk <- list(
+  "dorsolateral-prefrontal-cortex"                     = "dorsolateral-prefrontal-cortex",
+  "hippocampus-medial-entorhinal-cortex"                = "hippocampus-medial-entorhinal-cortex",
+  "middle-temporal-gyrus-and-superior-temporal-gyrus"   = "middle-temporal-gyrus-and-superior-temporal-gyrus",
+  "primary-visual-cortex-extrastriate-occipital-cortex" = "primary-visual-cortex-extrastriate-occipital-cortex"
+)
+
+qnp_stain_crosswalk <- list(
+  "Abeta (6E10) and IBA1"     = c("6E10", "Iba1", "6E10 x Iba1"),
+  "pTau (AT8) and pTDP-43"    = c("AT8", "pTDP43"),
+  "NeuN"                      = "NeuN",
+  "a-Synuclein"                = "aSyn",
+  "GFAP"                       = "GFAP",
+  "H&E-LFB"                    = "Hematoxylin"
+)
 
 # only percent-type measures get sliders on the Filter Donors page —
 # "average X area", "number of X per area" etc are dropped from the

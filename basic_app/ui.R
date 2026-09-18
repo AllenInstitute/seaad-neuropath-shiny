@@ -8,33 +8,74 @@ tagList(
   
   # always-visible scroll-to-top arrow. Sits outside navbarPage entirely
   # and is position:fixed, so it stays on the side of the viewport no
-  # matter how far down the page is scrolled or which tab is active.
-  tags$a(
-    href = "javascript:void(0)",
-    onclick = "window.scrollTo({top: 0, behavior: 'smooth'})",
-    title = "Back to top",
-    style = paste(
-      "position:fixed; left:18px; bottom:24px; z-index:1050;",
-      "width:42px; height:42px; border-radius:50%;",
-      "background:#7952b3; color:#fff; text-decoration:none;",
-      "display:flex; align-items:center; justify-content:center;",
-      "font-size:20px; line-height:1; box-shadow:0 2px 6px rgba(0,0,0,0.3);"
+  # matter how far down the page is scrolled — server-rendered so its
+  # side (left on Filter Donors, right elsewhere) can depend on the
+  # active tab; see output$scroll_top_arrow_ui in server.r.
+  uiOutput("scroll_top_arrow_ui"),
+  
+  # floating scratchpad — session-only (survives switching tabs, not a
+  # page refresh). It's a small toggle button that expands a panel
+  # holding a plain textAreaInput. Because that input is static (never
+  # inside a renderUI, and deliberately left out of the tab-change reset
+  # observer in server.r), Shiny keeps its value automatically for the
+  # whole session — no reactiveVal or other plumbing needed for that part.
+  tags$div(
+    style = "position:fixed; top:8px; right:60px; z-index:1060;",
+    tags$div(
+      style = paste(
+        "position:absolute; top:8px; right:44px; white-space:nowrap;",
+        "display:flex; align-items:center; gap:4px;",
+        "font-size:13px; font-weight:600; color:#7952b3;"
+      ),
+      "Take notes", HTML("&rarr;")
     ),
-    HTML("&uarr;")
+    tags$button(
+      type = "button", title = "Notes",
+      onclick = "document.getElementById('scratchpad_panel').classList.toggle('scratchpad-hidden')",
+      style = paste(
+        "width:34px; height:34px; border-radius:50%; border:none;",
+        "background:#7952b3; color:#fff; font-size:16px; cursor:pointer;"
+      ),
+      shiny::icon("note-sticky")
+    ),
+    tags$div(
+      id = "scratchpad_panel",
+      class = "scratchpad-hidden",
+      style = paste(
+        "position:absolute; top:40px; right:0; width:280px;",
+        "background:#fff; border:1px solid #ddd; border-radius:8px;",
+        "box-shadow:0 2px 10px rgba(0,0,0,0.25); padding:10px;"
+      ),
+      strong("Notes"),
+      textAreaInput("scratchpad_notes", NULL, rows = 8, width = "100%", resize = "vertical"),
+      actionButton("scratchpad_reset_btn", "Clear", class = "btn-sm btn-secondary")
+    )
   ),
+  tags$style(HTML(".scratchpad-hidden { display: none; }")),
   
   tags$head(
     tags$script(src = "https://cdn.jsdelivr.net/npm/openseadragon@4/build/openseadragon/openseadragon.min.js"),
     tags$script(HTML("
       // navigator.clipboard needs a SECURE CONTEXT (https, or localhost) —
       // on a plain http:// deployment it doesn't exist at all, and calling
-      // it does nothing with no visible error. This is almost certainly
-      // why 'Copy donor list' looked broken. Falls back to the classic
-      // execCommand approach whenever the Clipboard API isn't available.
-      function copyTextRobust(text) {
-        if (navigator.clipboard && window.isSecureContext) {
-          navigator.clipboard.writeText(text);
-        } else {
+      // it does nothing with no visible error. Sandboxed webviews (e.g.
+      // RStudio's built-in Viewer pane) can ALSO fail even when the API
+      // exists, because they often can't reach the system clipboard at
+      // all — if that's what's happening here, opening the app in a real
+      // browser tab (not the Viewer pane) should resolve it immediately.
+      //
+      // el is the CLICKED element (pass `this` from onclick) — flashes it
+      // to 'Copied!' briefly so clicking always gives visible confirmation
+      // either way, rather than a silent success-or-failure.
+      function copyTextRobust(text, el) {
+        function flash() {
+          if (!el) return;
+          var orig = el.getAttribute('data-orig') || el.innerHTML;
+          el.setAttribute('data-orig', orig);
+          el.innerHTML = 'Copied!';
+          setTimeout(function () { el.innerHTML = orig; }, 1200);
+        }
+        function fallback() {
           var ta = document.createElement('textarea');
           ta.value = text;
           ta.style.position = 'fixed';
@@ -42,8 +83,20 @@ tagList(
           document.body.appendChild(ta);
           ta.focus();
           ta.select();
-          try { document.execCommand('copy'); } catch (e) {}
+          var ok = false;
+          try { ok = document.execCommand('copy'); } catch (e) {}
           document.body.removeChild(ta);
+          // execCommand's return value was never being checked before —
+          // meaning 'Copied!' could show even when copying silently
+          // failed (e.g. a sandboxed iframe, like RStudio's Viewer pane,
+          // blocking clipboard access entirely). If BOTH mechanisms fail,
+          // this guarantees the text is still visible to copy by hand.
+          if (ok) { flash(); } else { window.prompt('Copy failed — copy manually:', text); }
+        }
+        if (navigator.clipboard && window.isSecureContext) {
+          navigator.clipboard.writeText(text).then(flash).catch(fallback);
+        } else {
+          fallback();
         }
       }
     ")),
@@ -239,16 +292,10 @@ tagList(
                  div(
                    style = "margin:12px 0; display:flex; gap:8px;",
                    downloadButton("iddonors_download_btn", "Download table (.csv)", class = "btn-secondary"),
-                   tags$button(
-                     "Copy donor list",
-                     class = "btn btn-secondary",
-                     onclick = "copyTextRobust(document.getElementById('identify_donors_list_pre').textContent)"
-                   )
+                   uiOutput("iddonors_copy_list_btn_ui", inline = TRUE)
                  ),
                  helpText("Click a donor's name for all metadata, including QNP values."),
-                 uiOutput("identify_donors_table_ui"),
-                 # hidden plain list, kept only so the Copy button has plain text to grab
-                 tags$div(style = "display:none;", tags$pre(id = "identify_donors_list_pre", textOutput("identify_donors_list_text")))
+                 uiOutput("identify_donors_table_ui")
                )
              )
     ),
