@@ -300,6 +300,45 @@ qnp_global_sentinel <- "Global"
 # a hardcoded copy in each place could.
 filter_donors_tab_name <- "Filter Donors"
 
+# tooltip text for the "Sync zoom/pan across images" toggle on the
+# ---------------------------------------------------------------------------
+# hardcoded UI strings — centralized here so wording is never duplicated
+# inconsistently across functions.r/server.r/ui.r, and so changing any of
+# it later means editing one line instead of hunting through three files.
+# This deliberately does NOT include every UI string in the app — routine,
+# single-use widget labels (a selectInput's "Region", a button's "Load")
+# aren't duplicated anywhere and carry no drift risk, so they stay as
+# ordinary inline UI copy. What's centralized here is either genuinely
+# repeated verbatim in multiple places, or is message/tooltip/heading
+# content that reads as "content" rather than a widget's own label.
+#
+# Naming convention:
+#   tt_<name>  — explanatory hover tooltip text
+#   lbl_<name> — a short name for a button, feature, or the app itself
+#   hdg_<name> — a structural section heading, reused across pages
+#   msg_<name> — a notification/status message (showNotification())
+# ---------------------------------------------------------------------------
+lbl_app_title <- "SEA-AD Viewer"
+
+lbl_scratchpad <- "Scratchpad"
+lbl_reset_image_zoom <- "Reset image zoom"
+
+hdg_annotations <- "Annotations"
+hdg_shared <- "Shared"
+hdg_qnp <- "QNP"
+
+msg_filters_reset <- "Filters reset."
+msg_page_reset <- "Page reset."
+
+# comparison pages — explains why synced zoom won't always line up
+# anatomically across images.
+tt_sync_zoom <- paste(
+  "Zoom is relative to each image individually, so synced views move",
+  "together, but different sections or regions may not line up anatomically."
+)
+tt_back_to_top <- "Back to top"
+tt_copy_donor_id <- "Copy donor id"
+
 # ---------------------------------------------------------------------------
 # annotation colors are chosen automatically per load — see
 # build_annotation_color_map() in functions.r. it picks a colorblind-friendly
