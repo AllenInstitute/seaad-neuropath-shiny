@@ -13,8 +13,8 @@ is_selected <- function(x) !is.null(x) && length(x) == 1 && nzchar(x)
 # metadata) so the same donor always compares equal across all three
 # sources, even if one file has leading/trailing whitespace or different
 # letter casing than another — this is exactly the kind of mismatch that
-# makes filter_donors_by_metadata()/filter_donors_by_qnp() intersect against
-# nothing and every donor go blank.
+# makes filter_donors_by_metadata()/filter_donors_identify_page() intersect
+# against nothing and every donor go blank.
 normalize_donor_id <- function(x) trimws(toupper(as.character(x)))
 
 `%||%` <- function(x, y) if (is.null(x)) y else x
@@ -204,10 +204,6 @@ get_regions_for_donor <- function(donor) {
   regions <- donor_manifest[[donor]]
   if (is.null(regions)) return(character(0))
   sort(names(regions))
-}
-
-get_all_regions <- function() {
-  sort(unique(unlist(lapply(names(donor_manifest), get_regions_for_donor), use.names = FALSE)))
 }
 
 # stains available for one specific donor+region pair (exact, no flattening).
@@ -574,141 +570,545 @@ load_qnp_metadata_csv <- function(path) {
   out
 }
 
-get_qnp_regions <- function() sort(unique(qnp_metadata$region))
+# ---------------------------------------------------------------------------
+# "Filter Donors" page.
+#
+# Two files, one shared key: donor_metadata (one row per donor: demographic
+# + clinical) and qnp_metadata (one row per donor+region+subregion: QNP).
+# Both are "donor-associated metadata" — the only structural difference is
+# that a donor has exactly one demographic/clinical row but potentially
+# several QNP rows (one per region+subregion they were measured in).
+#
+# QNP browsing is split into two modes via a radio button:
+#   Region mode: pick a region, then a subregion (or "Global" = that
+#     donor's mean across the region's subregions, offered only when the
+#     region HAS more than one subregion) — then one card per stain.
+#   Stain mode: pick a stain — then one card per REGION, each showing that
+#     stain's fields at that region's Global (or single-subregion) value.
+#     No region selector: every region is shown at once as its own card.
+# Only percent-type fields get sliders (qnp_fields is filtered to just
+# those in global.r).
+#
+# WHETHER A SLIDER IS "ACTIVE" IS TRACKED, NOT INFERRED.
+# Earlier versions tried to detect "the user hasn't touched this yet" by
+# comparing the widget's reported value against the data's exact range.
+# That is fundamentally unreliable: histoslider's React component can snap
+# handles to histogram bin edges, so an untouched slider's reported value
+# is NOT guaranteed to equal the data range — which is what kept silently
+# excluding the one donor holding a field's extreme value (the persistent
+# "83 of 84 on page load" bug), no matter how the tolerance was tuned.
+# Instead, iddonors_filter_active() records each input's FIRST observed
+# value as its baseline and reports the filter as active only once the
+# current value differs from it. No tolerances, no assumptions about the
+# widget's internals.
+# ---------------------------------------------------------------------------
 
-get_qnp_subregions <- function(region) {
-  sort(unique(qnp_metadata$subregion[qnp_metadata$region == region]))
+# creates the per-session store of slider baselines. Kept in a plain
+# environment (not reactiveValues) deliberately: it's memoization, and
+# writing to it must NOT invalidate the reactive that's reading it.
+new_iddonors_baseline_store <- function() new.env(parent = emptyenv())
+
+# TRUE once `val` differs from the first value ever seen for this input id.
+# The very first call for an id records the baseline and returns FALSE.
+iddonors_filter_active <- function(store, id, val) {
+  if (is.null(val)) return(FALSE)
+  if (!exists(id, envir = store, inherits = FALSE)) {
+    assign(id, val, envir = store)
+    return(FALSE)
+  }
+  !isTRUE(all.equal(val, get(id, envir = store, inherits = FALSE)))
 }
 
-# unique stain groups, in the order qnp_fields declares them (not alphabetical).
+# unique stain groups among the (already percent-only) qnp_fields, in the
+# order they're declared in global.r — not alphabetical.
 get_qnp_stain_groups <- function() {
   groups <- vapply(qnp_fields, function(f) f$stain_group, character(1))
   groups[!duplicated(groups)]
 }
 
-# a widget id unique to one (region, subregion, field) combination — needed
-# now that every region/subregion/stain nests statically into one big
-# accordion (rather than a single reactive selection), so every slider
-# needs its own id regardless of which region/subregion it belongs to.
-qnp_widget_id <- function(prefix, region, subregion, field_id) {
-  paste0(prefix, "_qnp_", gsub("[^A-Za-z0-9]+", "_", paste(region, subregion, field_id, sep = "_")))
+# a field's label for display: "Percent positive area" -> "% positive area".
+qnp_field_display_label <- function(label) {
+  label <- sub("^Percent\\b", "%", label)
+  sub("\\bpercent\\b", "%", label)
 }
 
-# Filters donors by EVERY QNP histoslider across every region/subregion/
-# stain nested in the accordion (build_qnp_full_accordion()), not just one
-# selected combination — since there's no separate region/subregion picker
-# anymore, all of them coexist and any that have actually been dragged
-# apply at once.
-#
-# Semantics per the request: a donor is only ever EXCLUDED when they have a
-# real, out-of-range value for some active filter's specific region+
-# subregion. A donor with no row at all for that region+subregion, or a
-# real row with NA for a given field, is never excluded by that filter —
-# "unknown" always passes through. Starts from ALL donors for exactly this
-# reason, then subtracts out only the ones positively shown to fail.
-filter_donors_by_qnp <- function(input, prefix) {
-  excluded <- character(0)
+# TRUE when a region has more than one subregion — the only case where a
+# "Global (average)" choice is meaningful. With a single subregion the
+# average would just BE that subregion's value.
+qnp_region_has_multiple_subregions <- function(region) {
+  subs <- qnp_by_region[[region]]
+  !is.null(subs) && length(subs) > 1
+}
+
+# which subregion key to use when we want "the region as a whole": the
+# Global average when there are several subregions, otherwise the single
+# subregion's own values (an average of one thing is that thing).
+# Builders, filters and reset ALL call this, so their widget ids can never
+# drift apart — that drift was a real, separately-diagnosed bug.
+qnp_region_level_key <- function(region) {
+  if (qnp_region_has_multiple_subregions(region)) "Global" else names(qnp_by_region[[region]])[[1]]
+}
+
+# returns a data.frame(donor, value) for one field at one region +
+# (subregion or "Global"). "Global" is a genuine per-donor MEAN across
+# every subregion they have in that region — never a pooling of raw rows,
+# which would double-count a donor once per subregion.
+identify_qnp_field_values <- function(region, subregion_choice, field_id) {
+  subregion_subsets <- qnp_by_region[[region]]
+  if (is.null(subregion_subsets)) return(data.frame(donor = character(0), value = numeric(0)))
   
-  for (region in get_qnp_regions()) {
-    for (subregion in get_qnp_subregions(region)) {
-      subset <- qnp_metadata[qnp_metadata$region == region & qnp_metadata$subregion == subregion, , drop = FALSE]
-      if (nrow(subset) == 0) next
-      
-      for (f in qnp_fields) {
-        val <- histoslider_range(input[[paste0(qnp_widget_id(prefix, region, subregion, f$id), "_range")]])
-        if (is.null(val)) next
-        bad <- subset$donor[!is.na(subset[[f$id]]) & (subset[[f$id]] < val[1] | subset[[f$id]] > val[2])]
-        excluded <- union(excluded, bad)
+  if (identical(subregion_choice, "Global")) {
+    combined <- do.call(rbind, subregion_subsets)
+    agg <- stats::aggregate(
+      combined[[field_id]], by = list(donor = combined$donor),
+      FUN = function(x) { m <- mean(x, na.rm = TRUE); if (is.nan(m)) NA_real_ else m }
+    )
+    names(agg) <- c("donor", "value")
+    agg
+  } else {
+    subset <- subregion_subsets[[subregion_choice]]
+    if (is.null(subset)) return(data.frame(donor = character(0), value = numeric(0)))
+    data.frame(donor = subset$donor, value = subset[[field_id]])
+  }
+}
+
+# a widget id unique to (region, subregion-or-"Global", field).
+identify_donor_qnp_widget_id <- function(region, subregion_choice, field_id) {
+  paste0("iddonors_qnpr_", gsub("[^A-Za-z0-9]+", "_", paste(region, subregion_choice, field_id, sep = "_")))
+}
+
+# one field's label + histoslider, for one region+subregion-or-Global view.
+build_qnp_field_slider <- function(f, region, subregion_choice) {
+  vals_df <- identify_qnp_field_values(region, subregion_choice, f$id)
+  vals <- stats::na.omit(vals_df$value)
+  if (length(vals) == 0) return(NULL)
+  shiny::tagList(
+    shiny::h6(qnp_field_display_label(f$label), style = "margin-bottom:2px;"),
+    build_histoslider(identify_donor_qnp_widget_id(region, subregion_choice, f$id), vals)
+  )
+}
+
+# a card whose HEADER is `header` and whose body is one slider per field in
+# `fields`, all at the given region+subregion view. Returns NULL when none
+# of those fields has any data there (so callers can drop empty cards).
+build_qnp_card <- function(header, fields, region, subregion_choice) {
+  sliders <- Filter(Negate(is.null), lapply(fields, function(f) {
+    build_qnp_field_slider(f, region, subregion_choice)
+  }))
+  if (length(sliders) == 0) return(NULL)
+  bslib::card(
+    style = "margin-bottom:12px;",
+    bslib::card_header(header),
+    bslib::card_body(shiny::tagList(sliders))
+  )
+}
+
+# lays cards out in a responsive multi-column grid (CSS columns), so the
+# QNP accordion panel reads as several columns rather than one long strip.
+qnp_cards_in_columns <- function(cards, min_col_width = "320px") {
+  shiny::tags$div(
+    style = sprintf("display:grid; grid-template-columns:repeat(auto-fit, minmax(%s, 1fr)); gap:12px;", min_col_width),
+    cards
+  )
+}
+
+# Region mode: one card per stain, at the chosen region + subregion/Global.
+build_iddonors_qnp_region_sliders <- function(region, subregion_choice) {
+  cards <- Filter(Negate(is.null), lapply(get_qnp_stain_groups(), function(stain) {
+    fields <- Filter(function(f) identical(f$stain_group, stain), qnp_fields)
+    build_qnp_card(stain, fields, region, subregion_choice)
+  }))
+  if (length(cards) == 0) return(shiny::helpText("No percent-field data for this selection."))
+  qnp_cards_in_columns(cards)
+}
+
+# Stain mode: one card per REGION (a "subcard" for each), each showing the
+# chosen stain's fields at that region's region-level value — no region
+# selector, every region is shown at once.
+build_iddonors_qnp_stain_sliders <- function(stain) {
+  fields <- Filter(function(f) identical(f$stain_group, stain), qnp_fields)
+  cards <- Filter(Negate(is.null), lapply(sort(names(qnp_by_region)), function(region) {
+    build_qnp_card(prettify_region(region), fields, region, qnp_region_level_key(region))
+  }))
+  if (length(cards) == 0) return(shiny::helpText("No percent-field data for this stain."))
+  qnp_cards_in_columns(cards)
+}
+
+# region mode's controls: a region selector, then (dependent on it) a
+# subregion-or-Global selector.
+build_iddonors_qnp_region_controls <- function() {
+  shiny::tagList(
+    shiny::selectInput("iddonors_qnp_region_sel", "Region", choices = with_placeholder(sort(names(qnp_by_region)))),
+    shiny::uiOutput("iddonors_qnp_subregion_ui")
+  )
+}
+
+# stain mode's controls: just a stain selector (every region then appears
+# as its own card — see build_iddonors_qnp_stain_sliders()).
+build_iddonors_qnp_stain_controls <- function() {
+  shiny::selectInput("iddonors_qnp_stain_sel", "Stain", choices = with_placeholder(get_qnp_stain_groups()))
+}
+
+# applies one field's slider to the running donor set, for one
+# region+subregion view. NA values always pass ("unknown" never excludes),
+# and the slider only counts as a filter once it's actually been moved off
+# its baseline (see iddonors_filter_active()).
+apply_qnp_slider_filter <- function(donors, region, subregion_choice, f, input, store) {
+  id <- identify_donor_qnp_widget_id(region, subregion_choice, f$id)
+  val <- histoslider_range(input[[id]])
+  if (!iddonors_filter_active(store, id, val)) return(donors)
+  
+  vals_df <- identify_qnp_field_values(region, subregion_choice, f$id)
+  bad <- vals_df$donor[!is.na(vals_df$value) & (vals_df$value < val[1] | vals_df$value > val[2])]
+  setdiff(donors, bad)
+}
+
+# region mode's filter: the one selected region+subregion, all stains.
+filter_donors_identify_qnp_region_mode <- function(input, store) {
+  region <- input$iddonors_qnp_region_sel
+  subregion_choice <- input$iddonors_qnp_subregion_sel
+  if (!is_selected(region) || !is_selected(subregion_choice)) return(donor_choices)
+  
+  donors <- donor_choices
+  for (f in qnp_fields) donors <- apply_qnp_slider_filter(donors, region, subregion_choice, f, input, store)
+  donors
+}
+
+# stain mode's filter: the chosen stain's fields across EVERY region (each
+# at its region-level value), matching the per-region cards shown.
+filter_donors_identify_qnp_stain_mode <- function(input, store) {
+  stain <- input$iddonors_qnp_stain_sel
+  if (!is_selected(stain)) return(donor_choices)
+  
+  fields <- Filter(function(f) identical(f$stain_group, stain), qnp_fields)
+  donors <- donor_choices
+  for (region in names(qnp_by_region)) {
+    for (f in fields) {
+      donors <- apply_qnp_slider_filter(donors, region, qnp_region_level_key(region), f, input, store)
+    }
+  }
+  donors
+}
+
+# one widget for a single Demographic/Clinical field, from donor_metadata.
+build_identify_donor_field_widget <- function(f) {
+  if (f$type == "range") {
+    breaks <- seq(floor(f$min), ceiling(f$max), by = 1)
+    shiny::tagList(
+      shiny::strong(f$label),
+      build_histoslider(paste0("iddonors_", f$id, "_range"), donor_metadata[[f$id]], breaks = breaks),
+      shiny::tags$hr()
+    )
+  } else {
+    shiny::tagList(
+      shiny::checkboxGroupInput(paste0("iddonors_", f$id, "_sel"), f$label, choices = f$choices, selected = character(0)),
+      shiny::plotOutput(paste0("iddonors_hist_", f$id), height = "170px"),
+      shiny::tags$hr()
+    )
+  }
+}
+
+# registers the categorical bar-chart histograms (numeric fields need no
+# registration — histoslider draws its own histogram inline).
+register_identify_donors_histograms <- function(output) {
+  register_metadata_histograms(output, "iddonors", donor_metadata)
+}
+
+# one accordion panel per metadata group, each holding that group's widgets.
+build_identify_donors_metadata_accordion <- function() {
+  panels <- lapply(names(metadata_display_groups), function(group_name) {
+    bslib::accordion_panel(
+      title = group_name,
+      shiny::tagList(lapply(metadata_display_groups[[group_name]], function(fid) {
+        f <- Find(function(x) identical(x$id, fid), metadata_fields)
+        if (is.null(f)) return(NULL)
+        build_identify_donor_field_widget(f)
+      }))
+    )
+  })
+  do.call(bslib::accordion, c(list(id = "iddonors_meta_accordion", open = FALSE), panels))
+}
+
+# the QNP accordion: one panel whose body is the mode radio + dynamic
+# controls + the multi-column cards.
+build_identify_donors_qnp_accordion <- function() {
+  body <- if (length(qnp_by_region) == 0) {
+    shiny::helpText("No QNP data loaded yet.")
+  } else {
+    shiny::tagList(
+      shiny::radioButtons(
+        "iddonors_qnp_mode", "Browse QNP by:",
+        choices = c("Region" = "region", "Stain" = "stain"), selected = "region", inline = TRUE
+      ),
+      shiny::uiOutput("iddonors_qnp_mode_ui"),
+      shiny::uiOutput("iddonors_qnp_sliders_ui")
+    )
+  }
+  bslib::accordion(bslib::accordion_panel(title = "QNP", body), id = "iddonors_qnp_accordion", open = FALSE)
+}
+
+# sets up every QNP-mode-dependent renderUI — called once per session.
+register_identify_donors_qnp <- function(output, input) {
+  output$iddonors_qnp_mode_ui <- shiny::renderUI({
+    if (identical(input$iddonors_qnp_mode, "stain")) build_iddonors_qnp_stain_controls() else build_iddonors_qnp_region_controls()
+  })
+  
+  output$iddonors_qnp_subregion_ui <- shiny::renderUI({
+    shiny::req(is_selected(input$iddonors_qnp_region_sel))
+    region <- input$iddonors_qnp_region_sel
+    subregions <- sort(names(qnp_by_region[[region]]))
+    # "Global (average)" only offered with >1 subregion — with just one,
+    # the average IS that subregion's value, so it'd be a duplicate choice.
+    choices <- if (qnp_region_has_multiple_subregions(region)) {
+      c("Global (average)" = "Global", subregions)
+    } else {
+      subregions
+    }
+    shiny::selectInput("iddonors_qnp_subregion_sel", "Subregion", choices = choices)
+  })
+  
+  output$iddonors_qnp_sliders_ui <- shiny::renderUI({
+    if (identical(input$iddonors_qnp_mode, "stain")) {
+      shiny::req(is_selected(input$iddonors_qnp_stain_sel))
+      build_iddonors_qnp_stain_sliders(input$iddonors_qnp_stain_sel)
+    } else {
+      shiny::req(is_selected(input$iddonors_qnp_region_sel), is_selected(input$iddonors_qnp_subregion_sel))
+      build_iddonors_qnp_region_sliders(input$iddonors_qnp_region_sel, input$iddonors_qnp_subregion_sel)
+    }
+  })
+}
+
+# reads every iddonors_* input and filters donor_choices down.
+# Range fields (Demographic/Clinical and QNP alike) only filter once their
+# slider has actually moved off its baseline; NA/unknown always passes.
+filter_donors_identify_page <- function(input, store) {
+  donors <- donor_choices
+  
+  for (f in metadata_fields) {
+    if (f$type == "range") {
+      id <- paste0("iddonors_", f$id, "_range")
+      val <- histoslider_range(input[[id]])
+      if (iddonors_filter_active(store, id, val)) {
+        keep <- donor_metadata$donor[is.na(donor_metadata[[f$id]]) |
+                                       (donor_metadata[[f$id]] >= val[1] & donor_metadata[[f$id]] <= val[2])]
+        donors <- intersect(donors, keep)
+      }
+    } else {
+      val <- input[[paste0("iddonors_", f$id, "_sel")]]
+      if (!is.null(val) && length(val) > 0) {
+        keep <- donor_metadata$donor[donor_metadata[[f$id]] %in% val]
+        donors <- intersect(donors, keep)
       }
     }
   }
   
-  setdiff(donor_choices, excluded)
+  qnp_keep <- if (identical(input$iddonors_qnp_mode, "stain")) {
+    filter_donors_identify_qnp_stain_mode(input, store)
+  } else {
+    filter_donors_identify_qnp_region_mode(input, store)
+  }
+  intersect(donors, qnp_keep)
 }
 
-# builds the FULL nested QNP structure — one accordion of regions, each
-# containing an accordion of its subregions, each containing an accordion
-# of stain groups, each containing that group's sliders — entirely static
-# (no dropdowns, no server-side reactivity needed), so the whole thing can
-# be embedded directly inside build_metadata_accordion()'s QNP panel.
-build_qnp_full_accordion <- function(prefix) {
-  regions <- get_qnp_regions()
-  if (length(regions) == 0) {
-    return(shiny::helpText("No QNP data loaded yet."))
+# resets every filter back to "no restriction". Also CLEARS the baseline
+# store, so the values pushed here become the new baselines rather than
+# reading as deliberate user filtering.
+reset_identify_donors_filters <- function(input, session, store) {
+  rm(list = ls(envir = store, all.names = TRUE), envir = store)
+  
+  for (f in metadata_fields) {
+    if (f$type == "range") {
+      rng <- suppressWarnings(range(donor_metadata[[f$id]], na.rm = TRUE))
+      if (all(is.finite(rng))) {
+        histoslider::update_histoslider(paste0("iddonors_", f$id, "_range"), start = rng[1], end = rng[2], session = session)
+      }
+    } else {
+      shiny::updateCheckboxGroupInput(session, paste0("iddonors_", f$id, "_sel"), selected = character(0))
+    }
   }
   
-  build_stain_accordion <- function(region, subregion, subset) {
-    stain_panels <- lapply(get_qnp_stain_groups(), function(sg) {
-      fields_in_group <- Filter(function(f) identical(f$stain_group, sg), qnp_fields)
-      
-      sliders <- lapply(fields_in_group, function(f) {
-        vals <- stats::na.omit(subset[[f$id]])
-        if (length(vals) == 0) return(NULL)
-        shiny::tagList(
-          shiny::strong(f$label),
-          build_histoslider(paste0(qnp_widget_id(prefix, region, subregion, f$id), "_range"), vals),
-          shiny::tags$hr()
-        )
-      })
-      sliders <- Filter(Negate(is.null), sliders)
-      if (length(sliders) == 0) return(NULL)
-      
-      bslib::accordion_panel(title = sg, shiny::tagList(sliders))
-    })
-    stain_panels <- Filter(Negate(is.null), stain_panels)
-    if (length(stain_panels) == 0) return(NULL)
-    
-    do.call(bslib::accordion, c(
-      list(id = qnp_widget_id(prefix, region, subregion, "accordion"), open = FALSE),
-      stain_panels
-    ))
+  reset_one_qnp_field <- function(f, region, subregion_choice) {
+    vals_df <- identify_qnp_field_values(region, subregion_choice, f$id)
+    rng <- suppressWarnings(range(vals_df$value, na.rm = TRUE))
+    if (all(is.finite(rng))) {
+      histoslider::update_histoslider(
+        identify_donor_qnp_widget_id(region, subregion_choice, f$id),
+        start = rng[1], end = rng[2], session = session
+      )
+    }
   }
   
-  region_panels <- lapply(regions, function(region) {
-    subregions <- get_qnp_subregions(region)
-    
-    # collect only the subregions that actually have data, keeping the
-    # built stain-accordion alongside its name so we know afterward whether
-    # there's exactly one (see the single-subregion shortcut below).
-    subregion_contents <- list()
-    for (subregion in subregions) {
-      subset <- qnp_metadata[qnp_metadata$region == region & qnp_metadata$subregion == subregion, , drop = FALSE]
-      if (nrow(subset) == 0) next
-      stain_accordion <- build_stain_accordion(region, subregion, subset)
-      if (is.null(stain_accordion)) next
-      subregion_contents[[subregion]] <- stain_accordion
+  if (identical(input$iddonors_qnp_mode, "stain")) {
+    stain <- input$iddonors_qnp_stain_sel
+    if (is_selected(stain)) {
+      fields <- Filter(function(x) identical(x$stain_group, stain), qnp_fields)
+      for (region in names(qnp_by_region)) {
+        for (f in fields) reset_one_qnp_field(f, region, qnp_region_level_key(region))
+      }
     }
-    if (length(subregion_contents) == 0) return(NULL)
-    
-    # only one subregion with data for this region — skip the subregion
-    # level of nesting entirely; fold its name into the region's own title.
-    if (length(subregion_contents) == 1) {
-      only_subregion <- names(subregion_contents)[[1]]
-      return(bslib::accordion_panel(
-        title = paste0(prettify_region(region), ": ", only_subregion),
-        subregion_contents[[1]]
-      ))
+  } else {
+    region <- input$iddonors_qnp_region_sel
+    subregion_choice <- input$iddonors_qnp_subregion_sel
+    if (is_selected(region) && is_selected(subregion_choice)) {
+      for (f in qnp_fields) reset_one_qnp_field(f, region, subregion_choice)
     }
-    
-    subregion_panels <- lapply(names(subregion_contents), function(sr) {
-      bslib::accordion_panel(title = sr, subregion_contents[[sr]])
-    })
-    
-    bslib::accordion_panel(
-      title = prettify_region(region),
-      do.call(bslib::accordion, c(
-        list(id = paste0(prefix, "_qnp_region_", gsub("[^A-Za-z0-9]+", "_", region)), open = FALSE),
-        subregion_panels
-      ))
+  }
+}
+
+# every metadata column for the matching donors, ready for display or
+# download — all of donor_metadata's fields, donor id first.
+identify_donors_table_data <- function(donor_ids) {
+  cols <- c("donor", vapply(metadata_fields, function(f) f$id, character(1)))
+  cols <- intersect(cols, names(donor_metadata))
+  df <- donor_metadata[donor_metadata$donor %in% donor_ids, cols, drop = FALSE]
+  df <- df[order(df$donor), , drop = FALSE]
+  for (nm in names(df)) if (is.numeric(df[[nm]])) df[[nm]] <- signif(df[[nm]], 4)
+  # human-readable headers, matching each field's configured label
+  labels <- c("Donor", vapply(metadata_fields, function(f) f$label, character(1)))
+  names(labels) <- c("donor", vapply(metadata_fields, function(f) f$id, character(1)))
+  names(df) <- unname(labels[names(df)])
+  df
+}
+
+# ---------------------------------------------------------------------------
+# QNP in WIDE form: one row per donor, one column per measure per region.
+# qnp_metadata is long (a row per donor+region+subregion), so this pivots
+# it out so each donor fits a single row alongside their demographic and
+# clinical columns.
+#
+# Column names are "<Region> | <measure>" where a region has a single
+# subregion, and "<Region> | <Subregion> | <measure>" where it has several
+# — dropping the subregion in the multi-subregion case would force an
+# average and silently lose data, so it's kept only where it's actually
+# needed to disambiguate.
+#
+# Uses qnp_fields_all (EVERY measure), not the percent-only qnp_fields the
+# on-page sliders use. DOWNLOAD/POPUP ONLY — never rendered into the
+# page's table.
+# ---------------------------------------------------------------------------
+build_qnp_wide_columns <- function(donor_ids) {
+  out <- data.frame(donor = sort(donor_ids), stringsAsFactors = FALSE)
+  if (nrow(qnp_metadata) == 0 || length(donor_ids) == 0) return(out)
+  
+  for (region in sort(names(qnp_by_region))) {
+    multi <- qnp_region_has_multiple_subregions(region)
+    for (subregion in sort(names(qnp_by_region[[region]]))) {
+      subset <- qnp_by_region[[region]][[subregion]]
+      if (is.null(subset) || nrow(subset) == 0) next
+      
+      prefix <- if (multi) {
+        paste0(prettify_region(region), " | ", subregion, " | ")
+      } else {
+        paste0(prettify_region(region), " | ")
+      }
+      
+      for (f in qnp_fields_all) {
+        if (!(f$id %in% names(subset))) next
+        vals <- subset[[f$id]]
+        if (all(is.na(vals))) next  # nothing measured here — skip the column entirely
+        # match on donor so rows line up regardless of subset ordering
+        out[[paste0(prefix, f$label)]] <- signif(vals[match(out$donor, subset$donor)], 6)
+      }
+    }
+  }
+  out
+}
+
+# the full download payload: demographic + clinical columns (the same ones
+# the on-page table shows) joined to every QNP measure in wide form.
+identify_donors_export_data <- function(donor_ids) {
+  base <- identify_donors_table_data(donor_ids)
+  wide <- build_qnp_wide_columns(donor_ids)
+  # identify_donors_table_data() renames "donor" -> "Donor" for display
+  names(wide)[names(wide) == "donor"] <- "Donor"
+  merge(base, wide, by = "Donor", all.x = TRUE, sort = TRUE)
+}
+
+# every metadata value for ONE donor — demographic, clinical, and each QNP
+# row on record. This is the body of the click-a-donor-name popup; it is
+# not rendered inline anywhere on the page.
+render_donor_all_metadata <- function(donor_id) {
+  row <- donor_metadata[donor_metadata$donor == donor_id, , drop = FALSE]
+  if (nrow(row) == 0) return(shiny::p("No metadata found for this donor."))
+  
+  field_by_id <- stats::setNames(metadata_fields, vapply(metadata_fields, function(f) f$id, character(1)))
+  
+  group_blocks <- lapply(names(metadata_display_groups), function(group_name) {
+    shiny::tagList(
+      shiny::strong(group_name),
+      shiny::div(
+        style = "display:flex; flex-wrap:wrap; gap:14px; margin:6px 0 14px 0;",
+        lapply(metadata_display_groups[[group_name]], function(fid) {
+          f <- field_by_id[[fid]]
+          if (is.null(f)) return(NULL)
+          shiny::tags$div(shiny::tags$strong(paste0(f$label, ": ")), as.character(row[[fid]]))
+        })
+      )
     )
   })
-  region_panels <- Filter(Negate(is.null), region_panels)
   
-  if (length(region_panels) == 0) {
-    return(shiny::helpText("No QNP data loaded yet."))
+  qnp_rows <- qnp_metadata[qnp_metadata$donor == donor_id, , drop = FALSE]
+  qnp_block <- if (nrow(qnp_rows) == 0) {
+    shiny::tagList(shiny::strong("QNP"), shiny::p("No QNP data on record for this donor."))
+  } else {
+    shiny::tagList(
+      shiny::strong("QNP"),
+      shiny::tagList(lapply(seq_len(nrow(qnp_rows)), function(i) {
+        r <- qnp_rows[i, , drop = FALSE]
+        vals <- Filter(Negate(is.null), lapply(qnp_fields_all, function(f) {
+          v <- r[[f$id]]
+          if (is.null(v) || is.na(v)) return(NULL)
+          shiny::tags$div(shiny::tags$strong(paste0(f$label, ": ")), signif(v, 4))
+        }))
+        if (length(vals) == 0) return(NULL)
+        shiny::tags$div(
+          style = "margin:8px 0; padding:8px; background:#f6f2fb; border-radius:4px;",
+          shiny::tags$div(
+            style = "margin-bottom:4px;",
+            shiny::tags$strong(paste0(prettify_region(r$region), ": ", r$subregion))
+          ),
+          vals
+        )
+      }))
+    )
   }
   
-  do.call(bslib::accordion, c(list(id = paste0(prefix, "_qnp_top_accordion"), open = FALSE), region_panels))
+  shiny::tagList(group_blocks, shiny::tags$hr(), qnp_block)
+}
+
+# a plain HTML table of the full metadata for every matching donor.
+render_identify_donors_table <- function(donor_ids) {
+  if (length(donor_ids) == 0) return(shiny::helpText("No donors match the current filters."))
+  df <- identify_donors_table_data(donor_ids)
+  
+  header <- shiny::tags$tr(lapply(names(df), shiny::tags$th))
+  rows <- lapply(seq_len(nrow(df)), function(i) {
+    shiny::tags$tr(lapply(names(df), function(nm) {
+      # the Donor cell is a link: clicking it pushes that donor's id to the
+      # server, which opens the all-metadata popup (see server.r). Done via
+      # Shiny.setInputValue rather than per-row observers, since the row set
+      # changes with every filter change.
+      if (identical(nm, "Donor")) {
+        donor_id <- as.character(df[i, nm])
+        shiny::tags$td(shiny::tags$a(
+          href = "javascript:void(0)",
+          onclick = sprintf("Shiny.setInputValue('iddonors_clicked_donor', '%s', {priority: 'event'})", donor_id),
+          donor_id
+        ))
+      } else {
+        shiny::tags$td(as.character(df[i, nm]))
+      }
+    }))
+  })
+  
+  shiny::tags$div(
+    style = "overflow-x:auto;",
+    shiny::tags$table(
+      class = "table table-striped table-hover",
+      shiny::tags$thead(header),
+      shiny::tags$tbody(rows)
+    )
+  )
 }
 
 # fills in each field's bounds/choices from real data — WITHOUT overwriting
@@ -802,9 +1202,20 @@ build_histoslider <- function(id, values, breaks = NULL) {
   # instead makes its internal hist() call fail with "Invalid breakpoints
   # ... NULL". so when no breaks were given, omit the argument entirely
   # via do.call() rather than passing breaks = NULL.
+  #
+  # start/end are ALSO left out of the R wrapper's documented signature by
+  # default (both NULL) — meaning the widget infers its own initial
+  # selection rather than us ever telling it what "untouched" should look
+  # like. explicitly passing start/end = this field's own full data range
+  # removes that ambiguity: the widget's initial value is now exactly what
+  # we told it to be, not something it independently derived.
+  clean_vals <- stats::na.omit(values)
+  rng <- if (length(clean_vals) > 0) range(clean_vals) else c(0, 1)
+  
   args <- list(
     id, NULL, values,
-    options = list(selectedColor = metadata_chart_border_color, unselectedColor = metadata_chart_color)
+    start = rng[1], end = rng[2],
+    options = list(selectedColor = metadata_chart_color, unselectedColor = metadata_chart_color)
   )
   if (!is.null(breaks)) args$breaks <- breaks
   do.call(histoslider::input_histoslider, args)
@@ -816,10 +1227,12 @@ build_histoslider <- function(id, values, breaks = NULL) {
 #               checkbox) plus a separate histogram registered server-side
 #               via register_metadata_histograms().
 # widget ids are prefixed per page.
-# builds one accordion per page with THREE top-level panels: "Demographic"
-# and "Clinical" (from metadata_display_groups, global.r — each panel holds
-# one widget per field in that group), and "QNP" (the fully nested
-# region -> subregion -> stain accordion from build_qnp_full_accordion()).
+#
+# builds one accordion per page with two top-level panels, "Demographic"
+# and "Clinical" (from metadata_display_groups, global.r), each holding a
+# sub-accordion with one panel per field in that group. Used by the four
+# regular pages' "Filter donors by metadata" — QNP filtering lives entirely
+# on the separate Identify Donors page instead (build_identify_donors_accordion()).
 build_metadata_accordion <- function(prefix, data) {
   field_by_id <- stats::setNames(metadata_fields, vapply(metadata_fields, function(f) f$id, character(1)))
   
@@ -858,14 +1271,6 @@ build_metadata_accordion <- function(prefix, data) {
     bslib::accordion_panel(title = group_name, sub_accordion)
   })
   
-  # QNP panel temporarily removed while that section is being debugged
-  # separately — build_qnp_full_accordion() and everything it depends on
-  # (qnp_fields, qnp_metadata, filter_donors_by_qnp(), etc.) is untouched
-  # below, just not wired in here, so re-adding it is a one-line change:
-  #   do.call(bslib::accordion, c(list(...), group_panels, list(
-  #     bslib::accordion_panel(title = "QNP", build_qnp_full_accordion(prefix))
-  #   )))
-  
   do.call(bslib::accordion, c(list(id = paste0(prefix, "_metadata_accordion"), open = FALSE), group_panels))
 }
 
@@ -887,7 +1292,7 @@ register_metadata_histograms <- function(output, prefix, data) {
         counts <- table(factor(data[[fld$id]], levels = fld$choices))
         graphics::par(mar = c(4, 1, 2, 1))
         bp <- graphics::barplot(
-          counts, col = metadata_chart_color, border = metadata_chart_border_color,
+          counts, col = metadata_chart_color, border = NA,
           yaxt = "n", xaxt = "n", ylim = c(0, max(counts) * 1.15)
         )
         graphics::text(x = bp, y = counts, labels = counts, pos = 3, cex = 1.1, xpd = TRUE)

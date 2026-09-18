@@ -186,12 +186,44 @@ qnp_fields <- list(
 
 # donor/region/subregion column headers in the QNP csv (edit if different).
 qnp_donor_column     <- "Donor ID"
-qnp_region_column     <- "brain region"
+qnp_region_column     <- "region"
 qnp_subregion_column <- "analysis region"
 
 qnp_metadata_csv_path <- "ins/QNPMetadata.csv"  # <- point this at your real QNP csv
 
 qnp_metadata <- load_qnp_metadata_csv(qnp_metadata_csv_path)
+
+# precomputed ONCE — every place that needs "the QNP rows for this region+
+# subregion" (the Identify Donors page's filter and its lazy accordion
+# builder, both of which run on every relevant reactive tick) reads this
+# instead of re-deriving it from qnp_metadata via unique()/boolean-masking
+# each time. qnp_by_region[[region]] is itself a named list keyed by
+# subregion, so both levels are O(1) lookups instead of repeated scans.
+qnp_by_region <- if (nrow(qnp_metadata) == 0) {
+  list()
+} else {
+  split_by_region <- split(qnp_metadata, qnp_metadata$region)
+  lapply(split_by_region, function(df_region) split(df_region, df_region$subregion))
+}
+# every qnp_fields entry is numeric ("these are all numerical filters" per
+# the request) — retrofitting type = "range" here (rather than repeating it
+# in every single list() entry above) lets shared code treat metadata_fields
+# and qnp_fields identically wherever it just needs to know a field's type.
+qnp_fields <- lapply(qnp_fields, function(f) { f$type <- "range"; f })
+
+# the COMPLETE QNP field spec, kept before the percent-only narrowing
+# below. Used for things that should show/export every measure — the CSV
+# download and the per-donor popup — while the on-page sliders use the
+# narrowed qnp_fields. (qnp_metadata itself was loaded above with all of
+# these columns, so the underlying data is all there either way.)
+qnp_fields_all <- qnp_fields
+
+# only percent-type measures get sliders on the Filter Donors page —
+# "average X area", "number of X per area" etc are dropped from the
+# FILTERING spec, per the request ("only create a slider for values that
+# are a percent"). every percent field's id was given a "pct_" prefix when
+# qnp_fields was first defined above, so that's what this filters on.
+qnp_fields <- Filter(function(f) grepl("^pct_", f$id), qnp_fields)
 
 # shared theme — passed to navbarPage(theme = ...) in ui.R. defined here
 # (rather than at the bottom) since metadata_chart_color, below, needs it.
@@ -208,11 +240,7 @@ app_theme <- bslib::bs_theme(bootswatch = "lux")
 # to auto-match the theme's primary color, but that returned an unresolved
 # Sass reference (rendered literally as black) rather than a compiled hex
 # value — so it's hardcoded directly here instead.
-metadata_chart_color <- "#f6f2fb"
-
-# bar outline color — #f6f2fb above is very pale on its own, so bars need a
-# visible border to stand out against a white background.
-metadata_chart_border_color <- "#7952b3"
+metadata_chart_color <- "#7952b3"
 
 # ---------------------------------------------------------------------------
 # annotation colors are chosen automatically per load — see

@@ -21,6 +21,7 @@ function(input, output, session) {
   sdonor_entries_rv  <- reactiveVal(list())
   sregion_entries_rv <- reactiveVal(list())
   
+  
   # ===========================================================================
   # shinyjs: keep each page's Load/Compare button disabled until its required
   # selections are actually made, so it's simply not possible to click Load
@@ -317,6 +318,74 @@ function(input, output, session) {
   })
   
   # ===========================================================================
+  # filter donors (qnp + metadata) — filters on top, table below. Range
+  # sliders only count as active once moved off their first observed value,
+  # tracked in this per-session baseline store (see the big comment above
+  # iddonors_filter_active() in functions.r for why inferring it from the
+  # data range never worked reliably).
+  # ===========================================================================
+  
+  iddonors_baselines <- new_iddonors_baseline_store()
+  
+  register_identify_donors_histograms(output)
+  register_identify_donors_qnp(output, input)
+  
+  observeEvent(input$iddonors_reset_btn, {
+    reset_identify_donors_filters(input, session, iddonors_baselines)
+    showNotification("Filters reset.", type = "message")
+  })
+  
+  output$identify_donors_metadata_accordion_ui <- renderUI({
+    req(identical(input$main_nav, "Filter Donors"))
+    build_identify_donors_metadata_accordion()
+  })
+  
+  output$identify_donors_qnp_accordion_ui <- renderUI({
+    req(identical(input$main_nav, "Filter Donors"))
+    build_identify_donors_qnp_accordion()
+  })
+  
+  identify_matching_donors <- reactive({
+    req(identical(input$main_nav, "Filter Donors"))
+    filter_donors_identify_page(input, iddonors_baselines)
+  })
+  
+  output$identify_donors_count_text <- renderText({
+    sprintf("%d of %d donors match.", length(identify_matching_donors()), length(donor_choices))
+  })
+  
+  output$identify_donors_table_ui <- renderUI({
+    render_identify_donors_table(identify_matching_donors())
+  })
+  
+  output$iddonors_download_btn <- downloadHandler(
+    filename = function() sprintf("filtered_donors_%s.csv", format(Sys.Date(), "%Y%m%d")),
+    content = function(file) {
+      # export includes every QNP measure in wide form (one column per
+      # region/subregion/measure) — deliberately richer than the on-page
+      # table, which stays demographic + clinical only.
+      utils::write.csv(identify_donors_export_data(identify_matching_donors()), file, row.names = FALSE)
+    }
+  )
+  
+  # clicking a donor's name in the table opens a popup with everything on
+  # record for them, including all QNP measures.
+  observeEvent(input$iddonors_clicked_donor, {
+    donor_id <- input$iddonors_clicked_donor
+    req(is_selected(donor_id))
+    showModal(modalDialog(
+      title = donor_id,
+      render_donor_all_metadata(donor_id),
+      easyClose = TRUE,
+      size = "l",
+      footer = modalButton("Close")
+    ))
+  })
+  
+  # kept only as a hidden text source for the page's Copy button.
+  output$identify_donors_list_text <- renderText({ paste(sort(identify_matching_donors()), collapse = ", ") })
+  
+  # ===========================================================================
   # about page — defined in R/aboutpage.R, edited independently of this file.
   # ===========================================================================
   
@@ -329,7 +398,10 @@ function(input, output, session) {
   # blank the moment you land on it, regardless of which tab you came from.
   # ===========================================================================
   
-  observeEvent(input$main_nav, {
+  # each page's reset, factored out so the per-page Reset buttons and the
+  # tab-change observer below share ONE implementation rather than two
+  # copies that could drift apart.
+  reset_home_page <- function() {
     home_entries_rv(list())
     updateCheckboxInput(session, "home_filter_donors", value = FALSE)
     updateSelectInput(session, "home_donor", selected = "")
@@ -337,7 +409,9 @@ function(input, output, session) {
     updateSelectInput(session, "home_stain", choices = with_placeholder(character(0)))
     updateCheckboxInput(session, "home_show_overlay", value = FALSE)
     updateSliderInput(session, "home_overlay_opacity", value = 0)
-    
+  }
+  
+  reset_dstain_page <- function() {
     dstain_entries_rv(list())
     updateCheckboxInput(session, "dstain_filter_donors", value = FALSE)
     updateSelectInput(session, "dstain_donor", selected = "")
@@ -345,7 +419,9 @@ function(input, output, session) {
     updateSelectInput(session, "dstain_stains", choices = character(0), selected = character(0))
     updateCheckboxInput(session, "dstain_show_overlay", value = FALSE)
     updateSliderInput(session, "dstain_overlay_opacity", value = 0)
-    
+  }
+  
+  reset_sdonor_page <- function() {
     sdonor_entries_rv(list())
     updateSelectInput(session, "sdonor_stain", selected = "")
     updateSelectInput(session, "sdonor_region", choices = with_placeholder(character(0)))
@@ -353,7 +429,9 @@ function(input, output, session) {
     updateSelectInput(session, "sdonor_donors_manual", choices = donor_choices, selected = character(0))
     updateCheckboxInput(session, "sdonor_show_overlay", value = FALSE)
     updateSliderInput(session, "sdonor_overlay_opacity", value = 0)
-    
+  }
+  
+  reset_sregion_page <- function() {
     sregion_entries_rv(list())
     updateCheckboxInput(session, "sregion_filter_donors", value = FALSE)
     updateSelectInput(session, "sregion_donor", selected = "")
@@ -361,5 +439,17 @@ function(input, output, session) {
     updateSelectInput(session, "sregion_regions", choices = character(0), selected = character(0))
     updateCheckboxInput(session, "sregion_show_overlay", value = FALSE)
     updateSliderInput(session, "sregion_overlay_opacity", value = 0)
+  }
+  
+  observeEvent(input$home_reset_btn,    { reset_home_page();    showNotification("Page reset.", type = "message") })
+  observeEvent(input$dstain_reset_btn,  { reset_dstain_page();  showNotification("Page reset.", type = "message") })
+  observeEvent(input$sdonor_reset_btn,  { reset_sdonor_page();  showNotification("Page reset.", type = "message") })
+  observeEvent(input$sregion_reset_btn, { reset_sregion_page(); showNotification("Page reset.", type = "message") })
+  
+  observeEvent(input$main_nav, {
+    reset_home_page()
+    reset_dstain_page()
+    reset_sdonor_page()
+    reset_sregion_page()
   }, ignoreInit = TRUE)
 }
