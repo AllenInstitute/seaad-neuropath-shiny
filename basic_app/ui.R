@@ -6,12 +6,184 @@ tagList(
   
   useShinyjs(),
   
+  tags$head(
+    tags$style(HTML(sprintf("
+      @font-face {
+        font-family: 'AllenHeadline';
+        src: url('fonts/AllenInstituteHeadline-Regular.woff2') format('woff2');
+      }
+      @font-face {
+        font-family: 'AllenHeadlineBold';
+        src: url('fonts/AllenInstituteHeadline-Bold.woff2') format('woff2');
+      }
+      @font-face {
+        font-family: 'AllenTextLight';
+        src: url('fonts/AllenInstituteText-Light.woff2') format('woff2');
+      }
+      @font-face {
+        font-family: 'AllenTextRegular';
+        src: url('fonts/AllenInstituteText-Regular.woff2') format('woff2');
+      }
+
+      /* #20 body text (light weight, per request) */
+      body, p, span, div, .form-control, .form-select {
+        font-family: 'AllenTextLight', sans-serif;
+      }
+
+      /* accordion labels, filter names (the base label part of a
+         dropdown's 'Name (n)'), context card labels, and any plain text
+         opted into the Regular weight (.text-regular) — more specific
+         than the .navbar/headers rule below, so .accordion-button here
+         correctly overrides that one */
+      .accordion-button, .filter-name-regular, .context-card-label, .text-regular {
+        font-family: 'AllenTextRegular', sans-serif !important;
+      }
+      /* the n count suffix on a dropdown label, and context card
+         values, use the light weight */
+      .filter-count-light, .context-card-value {
+        font-family: 'AllenTextLight', sans-serif;
+      }
+
+      /* #19 top bar and headers */
+      .navbar, h1, h2, h3, h4, h5, h6, .btn, .card-header {
+        font-family: 'AllenHeadline', sans-serif;
+      }
+
+      /* #21 title (the navbar brand specifically) — more specific than
+         the .navbar rule above so it correctly overrides it */
+      .navbar-brand {
+        font-family: 'AllenHeadlineBold', sans-serif !important;
+        font-weight: bold !important;
+      }
+
+      /* explicit navbar height, so the scratchpad and top-bar links below
+         (position:fixed, outside the navbar's own layout) can match it
+         exactly and land on the same line as the brand and page names */
+      .navbar { min-height: 60px; }
+
+      /* #5 navbar background white, page names in the brand color */
+      .navbar { background-color: #fff !important; }
+      .navbar .nav-link {
+        color: %s !important;
+        font-size: 0.85rem;
+        font-weight: normal !important;   /* #1 unbold */
+        text-transform: lowercase !important;   /* #8 */
+      }
+      .navbar .navbar-brand { text-transform: none !important; }
+
+      /* #1 fix: Shiny's navbarPage() renders the brand (.navbar-header)
+         and the page-name links (.navbar-nav) as FLOATED SIBLINGS, not
+         flex children — align-items has no effect on floated elements,
+         which is why that didn't work before. This removes the floats
+         and forces flexbox on the actual containers instead. Covers both
+         the classic markup (.navbar-header) and the newer one
+         (.navbar-collapse) since which one bslib renders isn't fully
+         certain without live testing. */
+      .navbar > .container-fluid {
+        display: flex !important;
+        align-items: center !important;
+        flex-wrap: wrap;
+      }
+      .navbar-header, .navbar-collapse, .navbar-nav {
+        float: none !important;
+        display: flex !important;
+        align-items: center !important;
+        margin: 0 !important;
+      }
+      .navbar-nav > li {
+        float: none !important;
+      }
+
+      /* space between the brand and the page-name links, and a
+         guaranteed minimum gap after them before the top-bar links */
+      .navbar-nav {
+        margin-left: 32px !important;
+        margin-right: 40px !important;
+      }
+
+      /* #4 headers should never render all-caps (accordion panel titles,
+         card headers, sub-headers in the QNP filters, the Filter Donors
+         page header, etc.) */
+      h1, h2, h3, h4, h5, h6, .accordion-button, .card-header {
+        text-transform: none !important;
+      }
+
+      /* #5 buttons in lowercase */
+      .btn {
+        text-transform: lowercase !important;
+      }
+
+      /* #8 buffer below the page's last element (Reset image zoom) */
+      body {
+        padding-bottom: 40px;
+      }
+
+      /* #2 Load/Compare button text white */
+      .btn-primary {
+        color: #fff !important;
+      }
+
+      /* explicit active-tab underline width — every other divider line
+         below is matched to this same width per request */
+      .navbar-nav .nav-link.active {
+        border-bottom: 2px solid %s !important;
+      }
+
+      /* sidebar: white background, no border around the box itself */
+      .well, .col-sm-4 > .well {
+        background-color: %s !important;
+        border: none !important;
+      }
+      .well hr {
+        border-top: 2px solid %s;
+        margin: 14px 0;
+      }
+      /* vertical line between the sidebar and main panel — on the
+         containing column, not the box, so it's a standalone divider
+         rather than looking attached to the filter box */
+      .col-sm-4 {
+        border-right: 2px solid %s;
+      }
+
+      /* muted brand-color table stripe instead of Bootstrap's default
+         gray, Filter Donors table only. Bootstrap's .table-striped sets
+         --bs-table-accent-bg (applied via an inset box-shadow, not
+         background-color) from --bs-table-striped-bg on odd rows — so
+         the variable has to be overridden here rather than fighting
+         that box-shadow with background-color directly. */
+      #identify_donors_table_ui .table-striped {
+        --bs-table-bg: #fff;
+        --bs-table-striped-bg: %s;
+      }
+    ", metadata_chart_color, sidebar_divider_color, sidebar_bg_color, sidebar_divider_color, sidebar_divider_color, table_stripe_color)))
+  ),
+  
   # always-visible scroll-to-top arrow. Sits outside navbarPage entirely
   # and is position:fixed, so it stays on the side of the viewport no
   # matter how far down the page is scrolled — server-rendered so its
   # side (left on Filter Donors, right elsewhere) can depend on the
   # active tab; see output$scroll_top_arrow_ui in server.r.
   uiOutput("scroll_top_arrow_ui"),
+  
+  # three top-bar links, black text with an arrow-up-right icon each.
+  # Static-flow styled (not position:fixed) and given an id so the script
+  # right below can move this div into the navbar's own container —
+  # making it a genuine part of the navbar's layout rather than a
+  # floating overlay like the scratchpad.
+  tags$div(
+    id = "top_bar_links",
+    style = "display:flex; align-items:center; gap:24px; margin-left:auto; margin-right:220px;",
+    top_bar_link("https://sea-ad.org", "sea-ad.org"),
+    top_bar_link("https://brain-map.org", "brain-map.org"),
+    top_bar_link("https://github.com/AllenInstitute/seaad-neuropath-shiny", "github")
+  ),
+  tags$script(HTML("
+    $(document).ready(function() {
+      var links = document.getElementById('top_bar_links');
+      var container = document.querySelector('.navbar .container-fluid');
+      if (links && container) { container.appendChild(links); }
+    });
+  ")),
   
   # floating scratchpad — session-only (survives switching tabs, not a
   # page refresh). It's a small toggle button that expands a panel
@@ -20,10 +192,10 @@ tagList(
   # observer in server.r), Shiny keeps its value automatically for the
   # whole session — no reactiveVal or other plumbing needed for that part.
   tags$div(
-    style = "position:fixed; top:8px; right:60px; z-index:1060;",
+    style = "position:fixed; top:0; right:60px; z-index:1060; height:60px; display:flex; align-items:center;",
     tags$div(
       style = paste(
-        "position:absolute; top:8px; right:44px; white-space:nowrap;",
+        "position:absolute; top:50%; right:44px; transform:translateY(-50%); white-space:nowrap;",
         "display:flex; align-items:center; gap:4px;",
         sprintf("font-size:13px; font-weight:600; color:%s;", metadata_chart_color)
       ),
@@ -42,7 +214,7 @@ tagList(
       id = "scratchpad_panel",
       class = "scratchpad-hidden",
       style = paste(
-        "position:absolute; top:40px; right:0; width:280px;",
+        "position:absolute; top:60px; right:0; width:280px;",
         "background:#fff; border:1px solid #ddd; border-radius:8px;",
         "box-shadow:0 2px 10px rgba(0,0,0,0.25); padding:10px;"
       ),
@@ -117,7 +289,14 @@ tagList(
   ),
   
   navbarPage(
-    title = lbl_app_title,
+    title = tags$div(
+      style = "display:flex; align-items:center; gap:8px;",
+      tags$img(src = "AI_lens_black.png", style = "height:1.3em;"),
+      tags$span(style = sprintf("color:%s;", brand_primary_color), lbl_brand_primary),
+      tags$span(style = sprintf("color:%s;", icon_color), " / "),
+      tags$span(style = sprintf("color:%s;", icon_color), lbl_brand_secondary)
+    ),
+    windowTitle = lbl_app_title,
     theme = app_theme,
     id = "main_nav",  # lets server.R detect tab switches and reset every page
     
@@ -128,13 +307,15 @@ tagList(
              sidebarLayout(
                sidebarPanel(
                  width = 4,
-                 selectInput("home_donor", "Donor", choices = with_placeholder(donor_choices)),
+                 selectInput("home_donor", dropdown_label("Donor", donor_choices), choices = with_placeholder(donor_choices)),
                  checkboxInput("home_filter_donors", "Filter donors by metadata", value = FALSE),
                  conditionalPanel(
                    condition = "input.home_filter_donors",
                    uiOutput("home_metadata_accordion_ui")
                  ),
+                 tags$hr(),
                  selectInput("home_region", "Region", choices = with_placeholder(character(0))),
+                 tags$hr(),
                  selectInput("home_stain", "Stain", choices = with_placeholder(character(0))),
                  tags$hr(),
                  # unchecked by default -> the opacity slider below stays hidden until turned on
@@ -144,7 +325,7 @@ tagList(
                    sliderInput("home_overlay_opacity", "Overlay opacity", min = 0, max = 1, value = 0, step = 0.05)
                  ),
                  actionButton("home_load_btn", "Load", class = "btn-primary"),
-                 actionButton("home_reset_btn", "Reset", class = "btn-secondary", style = "margin-left:8px;")
+                 actionButton("home_reset_btn", "Reset", style = sprintf("margin-left:8px; background-color:%s; border-color:%s; color:#fff;", reset_button_color, reset_button_color))
                ),
                mainPanel(
                  width = 8,
@@ -154,35 +335,50 @@ tagList(
                  tags$div(style = "height:20px;"),
                  uiOutput("home_viewer_grid"),
                  tags$div(style = "height:10px;"),
-                 uiOutput("home_reset_zoom_btn_ui"),
-                 uiOutput("home_donor_metadata")
+                 tags$div(style = "margin-right:60px;", uiOutput("home_reset_zoom_btn_ui"))
                )
              )
     ),
     
-    # =========================================================================
-    # compare stains — constraints: single donor, single region. varies: stain.
-    # =========================================================================
-    tabPanel("Compare Stains",
-             sidebarLayout(
-               sidebarPanel(
-                 width = 4,
-                 selectInput("dstain_donor", "Donor", choices = with_placeholder(donor_choices)),
-                 checkboxInput("dstain_filter_donors", "Filter donors by metadata", value = FALSE),
-                 conditionalPanel(
-                   condition = "input.dstain_filter_donors",
-                   uiOutput("dstain_metadata_accordion_ui")
-                 ),
-                 selectInput("dstain_region", "Region", choices = with_placeholder(character(0))),
-                 selectInput("dstain_stains", "Stains to compare", choices = character(0), multiple = TRUE),
-                 tags$hr(),
-                 checkboxInput("dstain_show_overlay", "Show mask/analysis overlay", value = FALSE),
-                 conditionalPanel(
-                   condition = "input.dstain_show_overlay",
-                   sliderInput("dstain_overlay_opacity", "Overlay opacity", min = 0, max = 1, value = 0, step = 0.05)
-                 ),
-                 actionButton("dstain_load_btn", "Load / Compare", class = "btn-primary"),
-                 actionButton("dstain_reset_btn", "Reset", class = "btn-secondary", style = "margin-left:8px;")
+    navbarMenu("Comparisons",
+               # =========================================================================
+               # compare stains — constraints: single donor, single region. varies: stain.
+               # =========================================================================
+               tabPanel("Compare Stains",
+                        sidebarLayout(
+                          sidebarPanel(
+                            width = 4,
+                            selectInput("dstain_donor", dropdown_label("Donor", donor_choices), choices = with_placeholder(donor_choices)),
+                            checkboxInput("dstain_filter_donors", "Filter donors by metadata", value = FALSE),
+                            conditionalPanel(
+                              condition = "input.dstain_filter_donors",
+                              uiOutput("dstain_metadata_accordion_ui")
+                            ),
+                            tags$hr(),
+                            selectInput("dstain_region", "Region", choices = with_placeholder(character(0))),
+                            tags$hr(),
+                            selectInput("dstain_stains", "Stains to compare", choices = character(0), multiple = TRUE),
+                            tags$hr(),
+                            checkboxInput("dstain_show_overlay", "Show mask/analysis overlay", value = FALSE),
+                            conditionalPanel(
+                              condition = "input.dstain_show_overlay",
+                              sliderInput("dstain_overlay_opacity", "Overlay opacity", min = 0, max = 1, value = 0, step = 0.05)
+                            ),
+                            actionButton("dstain_load_btn", "Load / Compare", class = "btn-primary"),
+                            actionButton("dstain_reset_btn", "Reset", style = sprintf("margin-left:8px; background-color:%s; border-color:%s; color:#fff;", reset_button_color, reset_button_color))
+                          ),
+                          mainPanel(
+                            width = 8,
+                            uiOutput("dstain_context_card"),   # only appears once Load has been clicked
+                            tags$div(style = "height:10px;"),
+                            sync_zoom_control("dstain_sync_zoom", default_checked = TRUE),
+                            uiOutput("dstain_annotation_ui"),
+                            tags$div(style = "height:18px;"),
+                            uiOutput("dstain_viewer_grid"),
+                            tags$div(style = "height:10px;"),
+                            uiOutput("dstain_reset_zoom_btn_ui")
+                          )
+                        )
                ),
                mainPanel(
                  width = 8,
@@ -262,7 +458,6 @@ tagList(
                  tags$div(style = "height:10px;"),
                  uiOutput("sdonor_reset_zoom_btn_ui")
                )
-             )
     ),
     
     # =========================================================================
@@ -301,37 +496,6 @@ tagList(
                  tags$div(style = "height:10px;"),
                  uiOutput("sregion_reset_zoom_btn_ui")
                )
-             )
-    ),
-    
-    # =========================================================================
-    # identify donors — dedicated page combining demographic, clinical, AND
-    # QNP filters (the only page where QNP shows up now) to find a set of
-    # donors of interest, which can then be pulled into the Compare Donors
-    # page (see its "Use donor set" button) or copied out directly.
-    # =========================================================================
-    tabPanel(filter_donors_tab_name,
-             sidebarLayout(
-               sidebarPanel(
-                 width = 4,
-                 actionButton("iddonors_reset_btn", "Reset filters", class = "btn-secondary", style = "margin-bottom:12px;"),
-                 uiOutput("identify_donors_metadata_accordion_ui"),
-                 uiOutput("identify_donors_qnp_accordion_ui")
-               ),
-               mainPanel(
-                 width = 8,
-                 h4("Matching donors"),
-                 textOutput("identify_donors_count_text"),
-                 uiOutput("identify_donors_zero_warning_ui"),
-                 div(
-                   style = "margin:12px 0; display:flex; gap:8px;",
-                   downloadButton("iddonors_download_btn", "Download table (.csv)", class = "btn-secondary"),
-                   uiOutput("iddonors_copy_list_btn_ui", inline = TRUE)
-                 ),
-                 helpText("Click a donor's name for all metadata, including QNP values."),
-                 uiOutput("identify_donors_table_ui")
-               )
-             )
     ),
     
     # =========================================================================

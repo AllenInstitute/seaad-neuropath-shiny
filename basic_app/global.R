@@ -8,67 +8,50 @@ library(shinyjs)
 
 source("R/functions.R")
 
-# ---------------------------------------------------------------------------
-# donor metadata field spec — THE single source of truth for what metadata
-# exists in this app. load_specimen_metadata_csv() only ever reads the
-# columns declared here (via `csv_column`); any other column in the
-# specimen CSV is ignored automatically. Adding/removing a metadata field is
-# entirely an edit here — no other file needs to change.
-#
-#   - "range"   fields: a histoslider over the raw numeric column. do NOT
-#     set min/max here — always derived from real data (derive_metadata_fields()),
-#     never guessed.
-#   - "select"  fields: unordered categorical values, filtered via checkboxes.
-#     choices are OPTIONAL here — omit them to auto-derive from real data
-#     (new values then show up with no code change); if hardcoded, that list
-#     is authoritative and won't be touched by real data.
-# ---------------------------------------------------------------------------
+# donor metadata field spec — the single source of truth for what
+# metadata exists in the app. load_specimen_metadata_csv() only reads
+# columns declared here via csv_column; anything else in the specimen CSV
+# is ignored. Range fields' min/max are always derived from real data
+# (derive_metadata_fields()); select fields' choices are auto-derived
+# unless hardcoded here.
 metadata_fields <- list(
-  list(id = "age_at_death",   label = "Age at death",     type = "range",
+  list(id = "age_at_death",   label = "age at death",     type = "range",
        csv_column = "Age at death (years)"),
-  list(id = "sex",             label = "Sex",              type = "select",
+  list(id = "sex",             label = "sex",              type = "select",
        choices = c("Female", "Male"), csv_column = "Sex"),
   list(id = "apoe_genotype",   label = "APOE genotype",    type = "select",
        choices = c("2/2", "2/3", "2/4", "3/3", "3/4", "4/4"), csv_column = "APOE genotype"),
-  list(id = "cog_status",      label = "Cognitive status", type = "select",
+  list(id = "cog_status",      label = "cognitive status", type = "select",
        choices = c("Dementia", "No dementia"), csv_column = "Cognitive status"),
   list(id = "adnc",            label = "ADNC",             type = "select",
        choices = c("Not AD", "Low", "Intermediate", "High"), csv_column = "ADNC"),
-  list(id = "thal_phase",      label = "Thal phase",       type = "select",
+  list(id = "thal_phase",      label = "thal phase",       type = "select",
        choices = as.character(0:5), csv_column = "Thal phase"),
-  list(id = "braak_stage",     label = "Braak stage",      type = "select",
+  list(id = "braak_stage",     label = "braak stage",      type = "select",
        choices = c("0", "I", "II", "III", "IV", "V", "VI"), csv_column = "Braak stage"),
   list(id = "cerad_score",     label = "CERAD score",      type = "select",
        choices = c("Absent", "Sparse", "Moderate", "Frequent"), csv_column = "CERAD score"),
-  list(id = "years_education", label = "Years of education", type = "range",
+  list(id = "years_education", label = "years of education", type = "range",
        csv_column = "Years of education (years)"),
   list(id = "cps",             label = "CPS", type = "range",
        csv_column = "Continuous Pseudo-progression Score")
 )
 
-# ---------------------------------------------------------------------------
-# donor metadata — loaded from the real specimen csv (no dummy-data fallback:
-# a bad path here should error loudly rather than silently show fake data).
-# ---------------------------------------------------------------------------
+# loaded from the real specimen csv — no dummy-data fallback, a bad path
+# here should error loudly rather than silently show fake data.
 specimen_metadata_csv_path <- "ins/SpecimenMetadata.csv"
 
 donor_metadata  <- load_specimen_metadata_csv(specimen_metadata_csv_path)
 metadata_fields <- derive_metadata_fields(metadata_fields, donor_metadata)
 
-# ---------------------------------------------------------------------------
 # manifest source — a single csv covering any number of donors. required
-# columns on every row: file_type, stain_type, donor, region, s3_uri.
+# columns per row: file_type, stain_type, donor, region, s3_uri.
 # annotation_name (or subregion) is only needed on annotation-xml rows.
-# width/height are OPTIONAL columns on RAW_IMAGE rows — if present (e.g.
-# after running precompute_manifest_dimensions.R separately), they're used
-# directly; if absent/blank, the app falls back to reading them live from
-# the .svs file's own header (see read_tiff_dimensions() in functions.r).
-# any donor/region/stain appearing in this csv is picked up automatically,
-# no code changes needed elsewhere.
-# ---------------------------------------------------------------------------
-# how long (seconds) to wait per annotation-file request before giving up —
-# increase this if you see "could not fetch ... Timeout was reached"
-# warnings at startup/load time; the S3 endpoint can be slow under load.
+# width/height are optional on RAW_IMAGE rows; if absent, the app reads
+# them live from the .svs file's own header (read_tiff_dimensions()).
+#
+# increase this if you see "could not fetch ... Timeout was reached" at
+# startup/load time — the S3 endpoint can be slow under load.
 annotation_fetch_timeout_sec <- 60
 
 manifest_csv_path <- "ins/260909_manifest_fill.csv"
@@ -82,33 +65,22 @@ donor_manifest <- build_donor_manifest_from_entries(csv_entries)
 donor_choices   <- names(donor_manifest)
 all_stains      <- get_all_stains()
 
-# ---------------------------------------------------------------------------
-# groups metadata_fields into cards for display (currently used under the
-# single image on the Home page — see render_donor_metadata_card()). edit
-# this to add/remove fields or reorder/regroup them; it only references
-# metadata_fields' ids, so it can't drift out of sync with the field specs
-# above. any field id omitted here simply won't be shown in a card (it's
-# still fully usable everywhere else — filters, accordions, etc).
-# ---------------------------------------------------------------------------
+# groups metadata_fields into cards for display. references field ids
+# only, so it can't drift out of sync with the specs above.
 metadata_display_groups <- list(
-  "Demographic" = c("age_at_death", "sex", "apoe_genotype", "years_education"),
-  "Clinical"    = c("cog_status", "adnc", "thal_phase", "braak_stage", "cerad_score", "cps")
+  "demographic" = c("age_at_death", "sex", "apoe_genotype", "years_education"),
+  "clinical"    = c("cog_status", "adnc", "thal_phase", "braak_stage", "cerad_score", "cps")
 )
 
-# ---------------------------------------------------------------------------
-# QNP (quantitative neuropathology) filters — structurally different from
-# metadata_fields above: each value is keyed by donor + region + subregion
-# (the same layer/subregion concept used for HALO annotations elsewhere),
-# not just donor. Read from a SEPARATE csv (qnp_metadata_csv_path). Every
-# field is numeric ("these are all numerical filters" per the request).
+# QNP (quantitative neuropathology) filters — keyed by donor + region +
+# subregion (unlike metadata_fields, which is one row per donor). Read
+# from a separate csv (qnp_metadata_csv_path below). Every field is
+# numeric. stain_group only organizes the filter UI (one accordion panel
+# per stain) — it doesn't need to match the csv itself.
 #
-# `csv_column` values below are placeholders using your literal descriptions
-# — replace them with the exact header text once you have the real QNP csv,
-# since I don't have that file to confirm exact column naming/casing against.
-#
-# `stain_group` is only used for organizing the filter UI (one accordion
-# panel per stain) — it doesn't need to match anything in the csv itself.
-# ---------------------------------------------------------------------------
+# csv_column values below are PLACEHOLDER descriptions, not confirmed
+# against a real QNP csv — replace with the exact header text once you
+# have that file, or every field will warn "missing column" at startup.
 qnp_fields <- list(
   list(id = "avg_6e10_object_area",              label = "Average object area",
        stain_group = "6E10", csv_column = "average 6e10 positive object area"),
@@ -184,62 +156,49 @@ qnp_fields <- list(
        stain_group = "NeuN", csv_column = "percent NeuN positive area")
 )
 
-# donor/region_grouping/region/subregion column headers in the QNP csv
-# (edit to match your real csv). region_grouping is OPTIONAL: if this
-# column doesn't exist, region_grouping just falls back to equal region
-# (see load_qnp_metadata_csv()), so the app still works with a 2-level
-# hierarchy until you confirm the real column name here.
+# donor/region_grouping/region/subregion column headers in the QNP csv.
+# region_grouping is optional — falls back to region itself if the column
+# doesn't exist (see load_qnp_metadata_csv()).
 qnp_donor_column           <- "Donor ID"
 qnp_region_grouping_column <- "region"
-qnp_region_column           <- "brain region"
+qnp_region_column          <- "brain region"
 qnp_subregion_column       <- "analysis region"
 
 qnp_metadata_csv_path <- "ins/QNPMetadata.csv"  # <- point this at your real QNP csv
 
 qnp_metadata <- load_qnp_metadata_csv(qnp_metadata_csv_path)
 
-# precomputed ONCE — every place that needs "the QNP rows for this region+
-# subregion" (the Identify Donors page's filter and its lazy accordion
-# builder, both of which run on every relevant reactive tick) reads this
-# instead of re-deriving it from qnp_metadata via unique()/boolean-masking
-# each time. qnp_by_region[[region]] is itself a named list keyed by
-# subregion, so both levels are O(1) lookups instead of repeated scans.
+# precomputed ONCE — every place needing "the QNP rows for this
+# region+subregion" (Identify Donors' filter + accordion builder, both on
+# every relevant reactive tick) reads this instead of re-deriving it each
+# time. qnp_by_region[[region]] is itself keyed by subregion, so both
+# levels are O(1) lookups.
 qnp_by_region <- if (nrow(qnp_metadata) == 0) {
   list()
 } else {
   split_by_region <- split(qnp_metadata, qnp_metadata$region)
   lapply(split_by_region, function(df_region) split(df_region, df_region$subregion))
 }
-# every qnp_fields entry is numeric ("these are all numerical filters" per
-# the request) — retrofitting type = "range" here (rather than repeating it
-# in every single list() entry above) lets shared code treat metadata_fields
-# and qnp_fields identically wherever it just needs to know a field's type.
+# every qnp_fields entry is numeric — retrofitting type = "range" here
+# (rather than repeating it in every list() entry above) lets shared code
+# treat metadata_fields and qnp_fields identically.
 qnp_fields <- lapply(qnp_fields, function(f) { f$type <- "range"; f })
 
-# the COMPLETE QNP field spec, kept before the percent-only narrowing
-# below. Used for things that should show/export every measure — the CSV
-# download and the per-donor popup — while the on-page sliders use the
-# narrowed qnp_fields. (qnp_metadata itself was loaded above with all of
-# these columns, so the underlying data is all there either way.)
+# the complete QNP field spec, kept before the percent-only narrowing
+# below — used where every measure should show (CSV download, per-donor
+# popup), while on-page sliders use the narrowed qnp_fields.
 qnp_fields_all <- qnp_fields
 
-# ---------------------------------------------------------------------------
-# Crosswalks between the IMAGE MANIFEST's region/stain naming (what
-# donor_manifest/entries use, e.g. "dorsolateral-prefrontal-cortex") and
-# QNP's own naming (qnp_metadata$region, and qnp_fields' stain_group).
-# Used by the Compare Donors popover to find the right QNP rows for the
-# region+stain currently being viewed there.
+# Crosswalks between the image manifest's region/stain naming and QNP's
+# own naming (qnp_metadata$region, qnp_fields$stain_group) — used to find
+# the right QNP rows for the region+stain currently being viewed in an
+# image-viewer donor popup.
 #
-# THESE ARE BEST-EFFORT GUESSES, not confirmed against your real QNP csv.
-# The region crosswalk's right-hand side defaults to the same slug as a
-# safe no-op placeholder — run `sort(unique(qnp_metadata$region))` once you
-# have real data and correct the right-hand side of any that don't match.
-# The stain crosswalk is grounded in inventory_manifest.R's own
-# stain_type naming (case_when block), mapping each combined-image stain
-# to every qnp_fields stain_group it actually covers — e.g. the combined
-# "Abeta (6E10) and IBA1" image includes measures from BOTH the 6E10 and
-# Iba1 (and their colocalization) QNP stain groups.
-# ---------------------------------------------------------------------------
+# THESE ARE BEST-EFFORT GUESSES, not confirmed against a real QNP csv.
+# Run sort(unique(qnp_metadata$region)) once you have real data and
+# correct any right-hand side that doesn't match. The stain crosswalk is
+# grounded in inventory_manifest.R's stain_type naming, mapping each
+# combined-image stain to every qnp_fields stain_group it covers.
 qnp_region_crosswalk <- list(
   "Dorsolateral Prefrontal Cortex (DLPFC)"                           = "DFC",
   "Medial Entorhinal Cortex and Hippocampus (MEC-HIP)"               = c("MEC", "HIP"),
@@ -263,67 +222,38 @@ qnp_stain_crosswalk <- list(
   "H&E-LFB"                    = "Hematoxylin"
 )
 
-# only percent-type measures get sliders on the Filter Donors page —
-# "average X area", "number of X per area" etc are dropped from the
-# FILTERING spec, per the request ("only create a slider for values that
-# are a percent"). every percent field's id was given a "pct_" prefix when
-# qnp_fields was first defined above, so that's what this filters on.
+# only percent-type measures get sliders on Filter Donors — every
+# percent field's id has a "pct_" prefix, so that's what this filters on.
 qnp_fields <- Filter(function(f) grepl("^pct_", f$id), qnp_fields)
 
-# shared theme — passed to navbarPage(theme = ...) in ui.R. defined here
-# (rather than at the bottom) since metadata_chart_color, below, needs it.
-app_theme <- bslib::bs_theme(bootswatch = "lux")
-
-# shared color used for BOTH histoslider bars and the categorical histogram
-# bars (register_metadata_histograms()), so all metadata charts look
-# consistent — pulled directly from the Lux theme's actual "primary" purple
-# rather than a hardcoded guess, so it always matches whatever bootswatch is
-# set above even if that changes later.
-# shared color used for BOTH histoslider bars and the categorical histogram
-# bars (register_metadata_histograms()), so all metadata charts look
-# consistent. NOTE: previously this was derived via bslib::bs_get_variables()
-# to auto-match the theme's primary color, but that returned an unresolved
-# Sass reference (rendered literally as black) rather than a compiled hex
-# value — so it's hardcoded directly here instead.
-metadata_chart_color <- "#7952b3"
-
-# light lavender background used for card/box accents throughout (donor
-# popup QNP boxes, the constraint card on comparison pages, etc.) — a
-# distinct purpose from metadata_chart_color above (that one's for
-# chart fills; this one's a background tint), so it's its own constant
-# rather than reusing that one for an unrelated purpose.
-accent_bg_color <- "#f6f2fb"
-
-# the sentinel value meaning "averaged across every subregion in this
-# region" throughout the QNP filtering/display code (identify_qnp_field_values(),
-# qnp_region_level_key(), the subregion selector's choices, etc.) — one
-# named constant instead of the literal string "Global" repeated in each
-# of those places.
-qnp_global_sentinel <- "Global"
-
-# the Filter Donors tab's exact title — compared against input$main_nav in
-# several places in server.r to gate that page's lazy-built content, and
-# used by ui.r's tabPanel() itself, so those can never drift apart the way
-# a hardcoded copy in each place could.
-filter_donors_tab_name <- "Filter Donors"
-
-# tooltip text for the "Sync zoom/pan across images" toggle on the
 # ---------------------------------------------------------------------------
-# hardcoded UI strings — centralized here so wording is never duplicated
-# inconsistently across functions.r/server.r/ui.r, and so changing any of
-# it later means editing one line instead of hunting through three files.
-# This deliberately does NOT include every UI string in the app — routine,
-# single-use widget labels (a selectInput's "Region", a button's "Load")
-# aren't duplicated anywhere and carry no drift risk, so they stay as
-# ordinary inline UI copy. What's centralized here is either genuinely
-# repeated verbatim in multiple places, or is message/tooltip/heading
-# content that reads as "content" rather than a widget's own label.
-#
-# Naming convention:
-#   tt_<name>  — explanatory hover tooltip text
-#   lbl_<name> — a short name for a button, feature, or the app itself
+# colors — every color used across ui.r/server.r/functions.r, in one place.
+# ---------------------------------------------------------------------------
+# NOTE: metadata_chart_color was requested as "#646FF" (5 hex digits,
+# invalid) — completed to "#6464FF" as a best guess; confirm/correct if wrong.
+metadata_chart_color  <- "#6464FF"  # brand color; also the Bootstrap theme's "primary"
+table_stripe_color    <- "#E8E9FF"  # muted tint of metadata_chart_color; Filter Donors table stripe
+sidebar_bg_color      <- "#ffffff"
+sidebar_divider_color <- "#DED9D1"
+brand_primary_color   <- "#aaa39f"  # the "sea-ad" brand text
+accent_bg_color       <- "#f6f2fb"  # QNP/constraint card background tint
+action_button_color   <- "#dc9600"  # Reset image zoom, Download table, Copy donor list buttons
+context_card_bg_color <- "#FCE9C2"  # muted tint of action_button_color; context card background
+reset_button_color    <- "#000000"  # page-level Reset buttons
+icon_color            <- "#000000"  # plain black icon/link text (overrides Bootstrap's default link blue)
+
+# Deliberately not a bootswatch preset — Lux's all-caps navbar text fought
+# the custom navbar look requested, so this is plain Bootstrap 5 with just
+# the primary color overridden.
+app_theme <- bslib::bs_theme(primary = metadata_chart_color)
+
+# ---------------------------------------------------------------------------
+# hardcoded UI strings — one place so wording can't drift between
+# functions.r/server.r/ui.r. Naming convention:
+#   tt_<name>  — hover tooltip text
+#   lbl_<name> — a short name for a button, feature, or the app
 #   hdg_<name> — a structural section heading, reused across pages
-#   msg_<name> — a notification/status message (showNotification())
+#   msg_<name> — a notification message
 # ---------------------------------------------------------------------------
 lbl_app_title <- "SEA-AD Neuropathology Viewer"
 
@@ -337,44 +267,37 @@ tt_donor_compare_cap <- sprintf("Number of donors that can be selected is capped
 lbl_scratchpad <- "Scratchpad"
 lbl_reset_image_zoom <- "Reset image zoom"
 
-hdg_annotations <- "Annotations"
-hdg_shared <- "Shared"
-hdg_qnp <- "QNP"
+hdg_annotations <- "annotations"
+hdg_shared      <- "shared"
+hdg_qnp         <- "QNP"
 
 msg_filters_reset <- "Filters reset."
-msg_page_reset <- "Page reset."
+msg_page_reset    <- "Page reset."
 
-# comparison pages — explains why synced zoom won't always line up
-# anatomically across images.
 tt_sync_zoom <- paste(
   "Zoom is relative to each image individually, so synced views move",
   "together, but different sections or regions may not line up anatomically."
 )
-tt_back_to_top <- "Back to top"
+tt_back_to_top   <- "Back to top"
 tt_copy_donor_id <- "Copy donor id"
 
-# ---------------------------------------------------------------------------
-# annotation colors are chosen automatically per load — see
-# build_annotation_color_map() in functions.r. it picks a colorblind-friendly
-# qualitative palette from khroma sized to how many distinct annotation
-# labels are actually present (muted <10, sunset 10-11, nightfall 12-17),
-# and assigns one color per label. nothing to configure here unless you want
-# to swap the palette scheme itself.
-# ---------------------------------------------------------------------------
+# Compare Donors: max donors comparable at once — shared by the radio
+# label, selectize's maxItems cap, the random-sample size, and the
+# metadata-mode truncation.
+donor_compare_cap <- 10
+donor_compare_min <- 2
+tt_donor_compare_cap <- sprintf("Number of donors that can be selected is capped at %d.", donor_compare_cap)
 
-# ---------------------------------------------------------------------------
-# precompute the "Filter donors by metadata" accordion (Demographic /
-# Clinical / QNP, with all its nested sub-accordions) ONCE per page prefix,
-# right here at app startup — not inside a renderUI, not per click, not per
-# user session. Everything it's built from (donor_metadata, qnp_metadata,
-# metadata_fields, qnp_fields) is static once these CSVs are loaded above,
-# so there's nothing to gain by rebuilding it later — every session's first
-# click on "Filter donors by metadata" now just hands back this already-built
-# object instantly, instead of re-walking every region/subregion/stain/field
-# combination from scratch. This is the fix for the earlier "first click is
-# slow" issue: that cost still exists, it's just paid once when the app
-# process starts rather than once per click.
-# ---------------------------------------------------------------------------
+# sentinel meaning "averaged across every subregion in this region", used
+# throughout the QNP filtering/display code instead of a repeated literal.
+qnp_global_sentinel <- "Global"
+
+# Filter Donors tab's exact title — compared against input$main_nav in
+# server.r, and used by ui.r's tabPanel() itself, so the two can't drift.
+filter_donors_tab_name <- "Filter Donors"
+
+# precomputed ONCE per page prefix at startup, not per click/session —
+# everything it's built from is static once the CSVs above are loaded.
 precomputed_metadata_accordion_ui <- lapply(
   list(home = "home", dstain = "dstain", sdonor = "sdonor", sregion = "sregion"),
   function(p) build_metadata_accordion(p, donor_metadata)

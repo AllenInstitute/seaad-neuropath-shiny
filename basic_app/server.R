@@ -44,12 +44,34 @@ function(input, output, session) {
     div(
       style = sprintf(
         "padding:10px 16px; margin-bottom:12px; background:%s; border-left:4px solid %s; border-radius:4px;",
-        accent_bg_color, metadata_chart_color
+        context_card_bg_color, action_button_color
       ),
       tagList(lapply(names(pairs), function(k) {
         tags$span(style = "margin-right:24px;", tags$strong(paste0(k, ": ")), pairs[[k]])
       }))
     )
+  }
+  
+  # the "Reset image zoom" button, identical across all four pages apart
+  # from its id.
+  reset_zoom_btn_ui <- function(id) {
+    actionButton(id, lbl_reset_image_zoom,
+                 style = sprintf("background-color:%s; border-color:%s; color:#fff; font-size:16px;", action_button_color, action_button_color))
+  }
+  
+  # shared Load/Compare body: fetches annotations (with a live progress
+  # bar) and builds the images payload, then sends it to the browser.
+  # syncCheckboxId names the page's sync-zoom checkbox, checked LIVE by
+  # the JS on every pan/zoom event (not baked in at load time), so
+  # unchecking it after images are loaded takes effect immediately.
+  load_images_with_progress <- function(entries, overlay_opacity, show_overlay, sync_checkbox_id = NULL) {
+    images <- shiny::withProgress(message = "Loading images...", value = 0, {
+      build_images_payload(entries, overlay_opacity, show_overlay,
+                           progress_callback = function(done, total) {
+                             shiny::setProgress(value = done / total, detail = sprintf("Fetching annotations: %d of %d", done, total))
+                           })
+    })
+    session$onFlushed(function() session$sendCustomMessage("loadImages", list(images = images, syncCheckboxId = sync_checkbox_id)), once = TRUE)
   }
   
   # each page's "currently loaded" state lives in a reactiveVal (not a plain
@@ -117,18 +139,19 @@ function(input, output, session) {
     } else {
       donor_choices
     }
-    updateSelectInput(session, "home_donor", choices = with_placeholder(filtered))
+    updateSelectInput(session, "home_donor", label = dropdown_label("Donor", filtered), choices = with_placeholder(filtered))
   })
   
   observeEvent(input$home_donor, {
     req(input$home_donor, nzchar(input$home_donor))
-    updateSelectInput(session, "home_region", choices = with_placeholder(get_regions_for_donor(input$home_donor)))
+    home_regions <- get_regions_for_donor(input$home_donor)
+    updateSelectInput(session, "home_region", label = dropdown_label("Region", home_regions), choices = with_placeholder(home_regions))
   })
   
   observeEvent(list(input$home_donor, input$home_region), {
     req(input$home_donor, input$home_region, nzchar(input$home_donor), nzchar(input$home_region))
-    updateSelectInput(session, "home_stain",
-                      choices = with_placeholder(get_stain_choices_for_donor_region(input$home_donor, input$home_region)))
+    home_stains <- get_stain_choices_for_donor_region(input$home_donor, input$home_region)
+    updateSelectInput(session, "home_stain", label = dropdown_label("Stain", home_stains), choices = with_placeholder(home_stains))
   }, ignoreInit = TRUE)
   
   output$home_annotation_ui <- renderUI({ render_annotation_master_ui(home_entries_rv(), id_prefix = "home") })
@@ -148,13 +171,17 @@ function(input, output, session) {
   output$home_donor_metadata <- renderUI({
     entries <- home_entries_rv()
     req(length(entries) > 0)
-    render_donor_metadata_card(entries[[1]]$donor)
+    e1 <- entries[[1]]
+    constraint_card(
+      "donor" = shiny::tagList(e1$donor, donor_info_trigger(e1$donor, e1$region, e1$stain)),
+      "region" = smart_lowercase(prettify_region(e1$region)),
+      "stain" = smart_lowercase(e1$stain)
+    )
   })
   
   output$home_reset_zoom_btn_ui <- renderUI({
     req(length(home_entries_rv()) > 0)
-    actionButton("home_reset_zoom_btn", lbl_reset_image_zoom,
-                 style = "background-color:#000; border-color:#000; color:#fff; font-size:16px;")
+    reset_zoom_btn_ui("home_reset_zoom_btn")
   })
   
   observeEvent(input$home_load_btn, {
@@ -165,18 +192,7 @@ function(input, output, session) {
     
     entries <- list(list(donor = input$home_donor, region = input$home_region, stain = input$home_stain, slot = slot))
     home_entries_rv(entries)
-    
-    # annotation files for this entry are fetched CONCURRENTLY inside
-    # build_images_payload() (see its comment), with live progress reported
-    # here via a determinate progress bar — so it's clear this is actually
-    # working and roughly how much is left, rather than an indefinite spinner.
-    images <- shiny::withProgress(message = "Loading image...", value = 0, {
-      build_images_payload(entries, input$home_overlay_opacity, input$home_show_overlay,
-                           progress_callback = function(done, total) {
-                             shiny::setProgress(value = done / total, detail = sprintf("Fetching annotations: %d of %d", done, total))
-                           })
-    })
-    session$onFlushed(function() session$sendCustomMessage("loadImages", list(images = images)), once = TRUE)
+    load_images_with_progress(entries, input$home_overlay_opacity, input$home_show_overlay)
   })
   
   # ===========================================================================
@@ -196,18 +212,19 @@ function(input, output, session) {
     } else {
       donor_choices
     }
-    updateSelectInput(session, "dstain_donor", choices = with_placeholder(filtered))
+    updateSelectInput(session, "dstain_donor", label = dropdown_label("Donor", filtered), choices = with_placeholder(filtered))
   })
   
   observeEvent(input$dstain_donor, {
     req(input$dstain_donor, nzchar(input$dstain_donor))
-    updateSelectInput(session, "dstain_region", choices = with_placeholder(get_regions_for_donor(input$dstain_donor)))
+    dstain_regions <- get_regions_for_donor(input$dstain_donor)
+    updateSelectInput(session, "dstain_region", label = dropdown_label("Region", dstain_regions), choices = with_placeholder(dstain_regions))
   })
   
   observeEvent(list(input$dstain_donor, input$dstain_region), {
     req(input$dstain_donor, input$dstain_region, nzchar(input$dstain_donor), nzchar(input$dstain_region))
-    updateSelectInput(session, "dstain_stains",
-                      choices = get_stain_choices_for_donor_region(input$dstain_donor, input$dstain_region))
+    dstain_stain_choices <- get_stain_choices_for_donor_region(input$dstain_donor, input$dstain_region)
+    updateSelectInput(session, "dstain_stains", label = dropdown_label("Stains to compare", dstain_stain_choices), choices = dstain_stain_choices)
   }, ignoreInit = TRUE)
   
   # card is built from the loaded entries, so it appears/disappears together with the grid
@@ -215,13 +232,12 @@ function(input, output, session) {
     entries <- dstain_entries_rv()
     req(length(entries) > 0)
     e1 <- entries[[1]]
-    constraint_card("Donor" = e1$donor, "Region" = prettify_region(e1$region))
+    constraint_card("donor" = shiny::tagList(e1$donor, donor_info_trigger(e1$donor, mode = "demo", icon = "person-vcard")), "region" = smart_lowercase(prettify_region(e1$region)))
   })
   
   output$dstain_reset_zoom_btn_ui <- renderUI({
     req(length(dstain_entries_rv()) > 0)
-    actionButton("dstain_reset_zoom_btn", lbl_reset_image_zoom,
-                 style = "background-color:#000; border-color:#000; color:#fff; font-size:16px;")
+    reset_zoom_btn_ui("dstain_reset_zoom_btn")
   })
   
   output$dstain_annotation_ui <- renderUI({ render_annotation_master_ui(dstain_entries_rv(), id_prefix = "dstain", varying_field = "stain") })
@@ -241,18 +257,7 @@ function(input, output, session) {
     
     entries <- sort_entries_by(entries, "stain")
     dstain_entries_rv(entries)
-    
-    images <- shiny::withProgress(message = "Loading images...", value = 0, {
-      build_images_payload(entries, input$dstain_overlay_opacity, input$dstain_show_overlay,
-                           progress_callback = function(done, total) {
-                             shiny::setProgress(value = done / total, detail = sprintf("Fetching annotations: %d of %d", done, total))
-                           })
-    })
-    # syncCheckboxId names the checkbox for the JS to check LIVE on every
-    # zoom/pan event, rather than a fixed value baked in at load time —
-    # that's what lets unchecking it after images are already loaded take
-    # effect immediately, with no reload needed.
-    session$onFlushed(function() session$sendCustomMessage("loadImages", list(images = images, syncCheckboxId = "dstain_sync_zoom")), once = TRUE)
+    load_images_with_progress(entries, input$dstain_overlay_opacity, input$dstain_show_overlay, "dstain_sync_zoom")
   })
   
   # ===========================================================================
@@ -268,7 +273,8 @@ function(input, output, session) {
   
   observeEvent(input$sdonor_stain, {
     req(input$sdonor_stain, nzchar(input$sdonor_stain))
-    updateSelectInput(session, "sdonor_region", choices = with_placeholder(get_regions_for_stain(input$sdonor_stain)))
+    sdonor_regions <- get_regions_for_stain(input$sdonor_stain)
+    updateSelectInput(session, "sdonor_region", label = dropdown_label("Region", sdonor_regions), choices = with_placeholder(sdonor_regions))
   })
   
   # keep the manual donor list free of dead-end choices: only donors that
@@ -287,13 +293,12 @@ function(input, output, session) {
     entries <- sdonor_entries_rv()
     req(length(entries) > 0)
     e1 <- entries[[1]]
-    constraint_card("Stain" = e1$stain, "Region" = prettify_region(e1$region))
+    constraint_card("stain" = smart_lowercase(e1$stain), "region" = smart_lowercase(prettify_region(e1$region)))
   })
   
   output$sdonor_reset_zoom_btn_ui <- renderUI({
     req(length(sdonor_entries_rv()) > 0)
-    actionButton("sdonor_reset_zoom_btn", lbl_reset_image_zoom,
-                 style = "background-color:#000; border-color:#000; color:#fff; font-size:16px;")
+    reset_zoom_btn_ui("sdonor_reset_zoom_btn")
   })
   
   output$sdonor_annotation_ui <- renderUI({ render_annotation_master_ui(sdonor_entries_rv(), id_prefix = "sdonor", varying_field = "donor") })
@@ -338,18 +343,7 @@ function(input, output, session) {
     
     entries <- sort_entries_by(entries, "donor")
     sdonor_entries_rv(entries)
-    
-    images <- shiny::withProgress(message = "Loading images...", value = 0, {
-      build_images_payload(entries, input$sdonor_overlay_opacity, input$sdonor_show_overlay,
-                           progress_callback = function(done, total) {
-                             shiny::setProgress(value = done / total, detail = sprintf("Fetching annotations: %d of %d", done, total))
-                           })
-    })
-    # syncCheckboxId names the checkbox for the JS to check LIVE on every
-    # zoom/pan event, rather than a fixed value baked in at load time —
-    # that's what lets unchecking it after images are already loaded take
-    # effect immediately, with no reload needed.
-    session$onFlushed(function() session$sendCustomMessage("loadImages", list(images = images, syncCheckboxId = "sdonor_sync_zoom")), once = TRUE)
+    load_images_with_progress(entries, input$sdonor_overlay_opacity, input$sdonor_show_overlay, "sdonor_sync_zoom")
   })
   
   # ===========================================================================
@@ -369,19 +363,19 @@ function(input, output, session) {
     } else {
       donor_choices
     }
-    updateSelectInput(session, "sregion_donor", choices = with_placeholder(filtered))
+    updateSelectInput(session, "sregion_donor", label = dropdown_label("Donor", filtered), choices = with_placeholder(filtered))
   })
   
   observeEvent(input$sregion_donor, {
     req(input$sregion_donor, nzchar(input$sregion_donor))
-    updateSelectInput(session, "sregion_stain",
-                      choices = with_placeholder(get_stain_choices_for_donor(input$sregion_donor)))
+    sregion_stains <- get_stain_choices_for_donor(input$sregion_donor)
+    updateSelectInput(session, "sregion_stain", label = dropdown_label("Stain", sregion_stains), choices = with_placeholder(sregion_stains))
   })
   
   observeEvent(list(input$sregion_donor, input$sregion_stain), {
     req(input$sregion_donor, input$sregion_stain, nzchar(input$sregion_donor), nzchar(input$sregion_stain))
-    updateSelectInput(session, "sregion_regions",
-                      choices = get_regions_with_stain_for_donor(input$sregion_donor, input$sregion_stain))
+    sregion_region_choices <- get_regions_with_stain_for_donor(input$sregion_donor, input$sregion_stain)
+    updateSelectInput(session, "sregion_regions", label = dropdown_label("Regions to compare", sregion_region_choices), choices = sregion_region_choices)
   }, ignoreInit = TRUE)
   
   output$sregion_context_card <- renderUI({
@@ -393,12 +387,11 @@ function(input, output, session) {
   
   output$sregion_reset_zoom_btn_ui <- renderUI({
     req(length(sregion_entries_rv()) > 0)
-    actionButton("sregion_reset_zoom_btn", lbl_reset_image_zoom,
-                 style = "background-color:#000; border-color:#000; color:#fff; font-size:16px;")
+    reset_zoom_btn_ui("sregion_reset_zoom_btn")
   })
   
   output$sregion_annotation_ui <- renderUI({ render_annotation_master_ui(sregion_entries_rv(), id_prefix = "sregion", varying_field = "region") })
-  output$sregion_viewer_grid   <- renderUI({ render_viewer_grid_ui(sregion_entries_rv(), label_field = "region") })
+  output$sregion_viewer_grid   <- renderUI({ render_viewer_grid_ui(sregion_entries_rv(), label_field = "region", donor_info_style = "qnp_only", qnp_icon = "file-earmark-bar-graph") })
   
   observeEvent(input$sregion_load_btn, {
     req(input$sregion_donor, input$sregion_stain, length(input$sregion_regions) > 0,
@@ -414,18 +407,7 @@ function(input, output, session) {
     
     entries <- sort_entries_by(entries, "region")
     sregion_entries_rv(entries)
-    
-    images <- shiny::withProgress(message = "Loading images...", value = 0, {
-      build_images_payload(entries, input$sregion_overlay_opacity, input$sregion_show_overlay,
-                           progress_callback = function(done, total) {
-                             shiny::setProgress(value = done / total, detail = sprintf("Fetching annotations: %d of %d", done, total))
-                           })
-    })
-    # syncCheckboxId names the checkbox for the JS to check LIVE on every
-    # zoom/pan event, rather than a fixed value baked in at load time —
-    # that's what lets unchecking it after images are already loaded take
-    # effect immediately, with no reload needed.
-    session$onFlushed(function() session$sendCustomMessage("loadImages", list(images = images, syncCheckboxId = "sregion_sync_zoom")), once = TRUE)
+    load_images_with_progress(entries, input$sregion_overlay_opacity, input$sregion_show_overlay, "sregion_sync_zoom")
   })
   
   # ===========================================================================
@@ -533,13 +515,18 @@ function(input, output, session) {
     ))
   })
   
-  # the region-dependent half of the popup — rebuilt whenever the radio
-  # inside the (currently open) modal changes.
+  # the region-dependent half of the popup — rebuilt whenever the region,
+  # stain, or view-mode control inside the (currently open) modal changes.
+  # nothing displays until both region and stain are explicitly picked —
+  # neither one defaults to a value, so there's no "default view".
   output$iddonors_popup_qnp_ui <- renderUI({
     donor_id <- iddonors_popup_donor()
-    req(is_selected(donor_id), is_selected(input$iddonors_popup_region_sel))
+    req(is_selected(donor_id))
+    if (!is_selected(input$iddonors_popup_region_sel) || !is_selected(input$iddonors_popup_stain_sel)) {
+      return(shiny::helpText("Select a region and stain above to see QNP data."))
+    }
     view_mode <- input$iddonors_popup_qnp_view_mode %||% "layers"
-    render_donor_qnp_region_detail(donor_id, input$iddonors_popup_region_sel, view_mode)
+    render_donor_qnp_region_detail(donor_id, input$iddonors_popup_region_sel, view_mode, stain = input$iddonors_popup_stain_sel)
   })
   
   # kept only as a hidden text source for the page's Copy button.
@@ -550,7 +537,8 @@ function(input, output, session) {
   output$iddonors_copy_list_btn_ui <- renderUI({
     list_text <- paste(sort(identify_matching_donors()), collapse = ", ")
     tags$button(
-      "Copy donor list", class = "btn btn-secondary",
+      bsicons::bs_icon("copy"), "Copy donor list", class = "btn",
+      style = sprintf("background-color:transparent; border:none; color:%s;", metadata_chart_color),
       `data-copy-text` = list_text,
       onclick = "copyTextRobust(this.getAttribute('data-copy-text'), this)"
     )
@@ -576,8 +564,8 @@ function(input, output, session) {
     home_entries_rv(list())
     updateCheckboxInput(session, "home_filter_donors", value = FALSE)
     updateSelectInput(session, "home_donor", selected = "")
-    updateSelectInput(session, "home_region", choices = with_placeholder(character(0)))
-    updateSelectInput(session, "home_stain", choices = with_placeholder(character(0)))
+    updateSelectInput(session, "home_region", label = dropdown_label("Region", character(0)), choices = with_placeholder(character(0)))
+    updateSelectInput(session, "home_stain", label = dropdown_label("Stain", character(0)), choices = with_placeholder(character(0)))
     updateCheckboxInput(session, "home_show_overlay", value = FALSE)
     updateSliderInput(session, "home_overlay_opacity", value = 0)
   }
@@ -586,8 +574,8 @@ function(input, output, session) {
     dstain_entries_rv(list())
     updateCheckboxInput(session, "dstain_filter_donors", value = FALSE)
     updateSelectInput(session, "dstain_donor", selected = "")
-    updateSelectInput(session, "dstain_region", choices = with_placeholder(character(0)))
-    updateSelectInput(session, "dstain_stains", choices = character(0), selected = character(0))
+    updateSelectInput(session, "dstain_region", label = dropdown_label("Region", character(0)), choices = with_placeholder(character(0)))
+    updateSelectInput(session, "dstain_stains", label = dropdown_label("Stains to compare", character(0)), choices = character(0), selected = character(0))
     updateCheckboxInput(session, "dstain_show_overlay", value = FALSE)
     updateSliderInput(session, "dstain_overlay_opacity", value = 0)
     updateCheckboxInput(session, "dstain_sync_zoom", value = TRUE)
@@ -609,8 +597,8 @@ function(input, output, session) {
     sregion_entries_rv(list())
     updateCheckboxInput(session, "sregion_filter_donors", value = FALSE)
     updateSelectInput(session, "sregion_donor", selected = "")
-    updateSelectInput(session, "sregion_stain", choices = with_placeholder(character(0)))
-    updateSelectInput(session, "sregion_regions", choices = character(0), selected = character(0))
+    updateSelectInput(session, "sregion_stain", label = dropdown_label("Stain", character(0)), choices = with_placeholder(character(0)))
+    updateSelectInput(session, "sregion_regions", label = dropdown_label("Regions to compare", character(0)), choices = character(0), selected = character(0))
     updateCheckboxInput(session, "sregion_show_overlay", value = FALSE)
     updateSliderInput(session, "sregion_overlay_opacity", value = 0)
     updateCheckboxInput(session, "sregion_sync_zoom", value = FALSE)
