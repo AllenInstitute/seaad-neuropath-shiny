@@ -1082,7 +1082,7 @@ sync_zoom_control <- function(id, default_checked) {
   shiny::tagList(
     shiny::tags$div(
       style = "display:flex; align-items:center; gap:6px;",
-      bslib::tooltip(shiny::tags$span(style = sprintf("color:%s;", icon_color), bsicons::bs_icon("info-circle-fill")), tt_sync_zoom, placement = "right"),
+      bslib::tooltip(shiny::tags$span(style = "color:#000;", bsicons::bs_icon("info-circle-fill")), tt_sync_zoom, placement = "right"),
       do.call(shiny::tags$input, checkbox_attrs),
       shiny::tags$label(`for` = id, style = "margin:0; cursor:pointer; font-weight:bold;", "Sync zoom/pan across images")
     ),
@@ -1445,39 +1445,39 @@ register_metadata_histograms <- function(output, prefix, data) {
 # other two are fixed and shown once in a constraint card instead.
 # ---------------------------------------------------------------------------
 
-# the clickable donor-info trigger — an icon that opens a modal with that
-# donor's metadata + QNP crosswalk (see the shared
-# observeEvent(input$donor_info_click, ...) in server.r). Shared across
-# every page that shows one.
+# the clickable donor-info trigger — an icon that, when clicked, opens a
+# modal with that donor's metadata + QNP crosswalk (see the single shared
+# observeEvent(input$donor_info_click, ...) in server.r). Shared so every
+# page that shows one (Home, Compare Stains, Compare Donors, Compare
+# Regions) uses the exact same icon and popup content.
 #
-# Deliberately NOT bslib::popover()/tooltip() — those have a confirmed
+# Deliberately NOT bslib::popover()/tooltip() here — those have a confirmed
 # upstream limitation (rstudio/bslib#1019) where a trigger stops being
-# interactive once its surrounding content was inserted dynamically (every
-# context card/viewer grid here is renderUI content). A plain onclick +
-# Shiny.setInputValue + modal sidesteps it, since it only depends on
-# Shiny's own input binding, which does rescan the DOM after every render.
+# interactive once its surrounding content was inserted dynamically (e.g.
+# via renderUI()) rather than present at initial page load. Every context
+# card and viewer grid in this app IS renderUI content, so the icon looked
+# present but did nothing. A plain onclick + Shiny.setInputValue + modal
+# sidesteps that entirely — it only depends on Shiny's own input binding,
+# which does correctly rescan the DOM after every render.
 #
-# region/stain may be NULL (e.g. Compare Regions, where region varies per
-# image) — render_donor_metadata_qnp_block() treats NULL as "omit the QNP
-# section", so passing NULL is how that section gets skipped.
-#
-# qnp_all_fields travels through as allFields: it tells the QNP block to
-# show every field regardless of this stain's own crosswalk group (used
-# by Compare Stains), while stain itself still reaches the popup so its
-# header can name which stain the card belongs to.
-donor_info_trigger <- function(donor_id, region = NULL, stain = NULL, mode = "combined", icon = "person-vcard", qnp_all_fields = FALSE) {
+# region/stain may be NULL (e.g. Compare Regions' context card, where
+# region VARIES per image and there's no one region to show QNP for) —
+# render_donor_metadata_list() already treats a NULL image_region/
+# image_stain as "omit the QNP section", so passing NULL here is exactly
+# how that section gets skipped for that page.
+donor_info_trigger <- function(donor_id, region = NULL, stain = NULL, show_filter_donors_link = FALSE) {
   shiny::tags$span(
-    bsicons::bs_icon(icon),
-    style = sprintf("color:%s; cursor:pointer; margin-left:6px;", icon_color),
+    bsicons::bs_icon("person-vcard"),
+    style = "color:#000; cursor:pointer; margin-left:6px;",
     title = paste("Donor", donor_id),
     onclick = sprintf(
-      "Shiny.setInputValue('donor_info_click', {donor: '%s', region: '%s', stain: '%s', mode: '%s', allFields: %s}, {priority: 'event'})",
-      donor_id, region %||% "", stain %||% "", mode, if (isTRUE(qnp_all_fields)) "true" else "false"
+      "Shiny.setInputValue('donor_info_click', {donor: '%s', region: '%s', stain: '%s', filterLink: %s}, {priority: 'event'})",
+      donor_id, region %||% "", stain %||% "", if (isTRUE(show_filter_donors_link)) "true" else "false"
     )
   )
 }
 
-render_viewer_grid_ui <- function(entries, label_field = c("stain", "donor", "region"), donor_info_style = c("none", "demo_only", "qnp_only", "split", "combined"), qnp_icon = "file-earmark-bar-graph", qnp_all_fields = FALSE) {
+render_viewer_grid_ui <- function(entries, label_field = c("stain", "donor", "region"), show_donor_info = FALSE, donor_info_filter_link = FALSE) {
   label_field <- match.arg(label_field)
   donor_info_style <- match.arg(donor_info_style)
   if (length(entries) == 0) return(NULL)  # blank until something is actually loaded
@@ -1486,23 +1486,11 @@ render_viewer_grid_ui <- function(entries, label_field = c("stain", "donor", "re
     cid   <- paste0("osd-", safe_id(e$donor, e$stain, e$region))
     label <- if (label_field == "region") prettify_region(e$region) else e[[label_field]]
     
-    triggers <- switch(donor_info_style,
-                       "none"      = NULL,
-                       "demo_only" = donor_info_trigger(e$donor, mode = "demo", icon = "person-vcard"),
-                       "qnp_only"  = donor_info_trigger(e$donor, e$region, e$stain, mode = "qnp", icon = qnp_icon, qnp_all_fields = qnp_all_fields),
-                       "combined"  = donor_info_trigger(e$donor, e$region, e$stain, mode = "combined", icon = "person-vcard"),
-                       "split"     = shiny::tagList(
-                         donor_info_trigger(e$donor, mode = "demo", icon = "person-vcard"),
-                         donor_info_trigger(e$donor, e$region, e$stain, mode = "qnp", icon = qnp_icon, qnp_all_fields = qnp_all_fields)
-                       )
-    )
-    heading <- if (is.null(triggers)) {
-      shiny::h5(label)
-    } else {
+    heading <- if (show_donor_info) {
       shiny::tags$div(
         style = "display:flex; align-items:center; gap:6px;",
         shiny::h5(style = "margin:0;", label),
-        triggers
+        donor_info_trigger(e$donor, e$region, e$stain, show_filter_donors_link = donor_info_filter_link)
       )
     }
     
@@ -1662,9 +1650,10 @@ build_images_payload <- function(entries, overlay_opacity, show_overlay = TRUE, 
 }
 
 # compact list of ALL metadata_fields for one donor — used inside the info
-# popover next to each donor heading (Compare Stains/Donors) and in the
-# context card (Home/Compare Stains/Compare Regions).
-render_donor_demo_clinical <- function(donor_id) {
+# popover next to each donor heading on the Compare Donors page. unlike
+# render_donor_metadata_card(), this has no heading/grouping of its own,
+# since the popover title already provides that context.
+render_donor_metadata_list <- function(donor_id, image_region = NULL, image_stain = NULL, show_filter_donors_link = FALSE) {
   row <- donor_metadata[donor_metadata$donor == donor_id, , drop = FALSE]
   if (nrow(row) == 0) return(shiny::p("No metadata found for this donor."))
   shiny::tagList(lapply(metadata_fields, function(f) {
@@ -1674,41 +1663,39 @@ render_donor_demo_clinical <- function(donor_id) {
       shiny::tags$span(class = "context-card-value", smart_lowercase(as.character(row[[f$id]])))
     )
   }))
-}
-
-render_donor_metadata_list <- function(donor_id, image_region = NULL, image_stain = NULL) {
-  shiny::tagList(
-    render_donor_demo_clinical(donor_id),
-    render_donor_metadata_qnp_block(donor_id, image_region, image_stain)
-  )
+  
+  qnp_block <- render_donor_metadata_qnp_block(donor_id, image_region, image_stain)
+  
+  # points to the Filter Donors page's own donor popup, which has much
+  # more complete QNP coverage (every region on record, not just what the
+  # image-viewer crosswalk maps to) — reuses that page's existing
+  # click-a-donor-name mechanism directly, opening its modal in place of
+  # this one, rather than just navigating to an unfiltered tab.
+  filter_donors_link <- if (isTRUE(show_filter_donors_link)) {
+    shiny::tags$div(
+      style = "margin-top:10px;",
+      shiny::tags$a(
+        href = "javascript:void(0)",
+        onclick = sprintf("Shiny.setInputValue('iddonors_clicked_donor', '%s', {priority: 'event'})", donor_id),
+        HTML("See full QNP detail on the Filter Donors page &rarr;")
+      )
+    )
+  } else {
+    NULL
+  }
+  
+  shiny::tagList(meta_block, qnp_block, filter_donors_link)
 }
 
 # QNP values for one donor, scoped to the image region+stain currently
 # being viewed on Compare Donors (crosswalked via qnp_region_crosswalk /
 # qnp_stain_crosswalk, global.r) — every measure (qnp_fields_all, not just
 # percent-type), across every layer/subregion in that region.
-render_donor_metadata_qnp_block <- function(donor_id, image_region, image_stain = NULL, standalone = FALSE, all_fields = FALSE) {
-  # divider only makes sense when this block follows something else (the
-  # combined view, where it separates demo/clinical from QNP) — shown on
-  # its own (Compare Stains'/Compare Regions' QNP-only trigger), there's
-  # nothing above it to separate from.
-  leading_hr <- if (standalone) NULL else shiny::tags$hr()
-  
+render_donor_metadata_qnp_block <- function(donor_id, image_region, image_stain = NULL) {
   # region unknown entirely (Compare Regions, where region varies and
   # there's no single value to scope QNP to) — omit cleanly. This is an
   # expected, intentional case, not an error, so no message either.
   if (is.null(image_region)) return(NULL)
-  
-  # header always names the region/stain combination this card is scoped
-  # to — reused across every return branch below, including the
-  # crosswalk-miss and no-data fallbacks, so it's always clear which
-  # image a popup was opened from.
-  header_detail <- if (!is.null(image_stain)) {
-    sprintf("%s / %s", smart_lowercase(prettify_region(image_region)), smart_lowercase(image_stain))
-  } else {
-    smart_lowercase(prettify_region(image_region))
-  }
-  header <- shiny::tagList(shiny::strong(hdg_qnp), sprintf(" — %s", header_detail))
   
   qnp_regions <- qnp_region_crosswalk[[image_region]]
   if (is.null(qnp_regions)) {
@@ -1720,17 +1707,18 @@ render_donor_metadata_qnp_block <- function(donor_id, image_region, image_stain 
     ))
   }
   
-  # all_fields (Compare Stains) shows every stain group's fields for this
-  # region rather than narrowing to one — a genuinely-given-but-unmapped
-  # stain still surfaces as a real crosswalk gap when all_fields is off.
-  fields <- if (all_fields || is.null(image_stain)) {
+  # stain unknown (Compare Stains, where stain varies) — show every stain
+  # group's fields for this region rather than filtering to one arbitrary
+  # stain; a genuinely-given-but-unmapped stain still surfaces as a real
+  # crosswalk gap.
+  fields <- if (is.null(image_stain)) {
     qnp_fields_all
   } else {
     stain_groups <- qnp_stain_crosswalk[[image_stain]]
     if (is.null(stain_groups)) {
       return(shiny::tagList(
-        leading_hr,
-        header,
+        shiny::tags$hr(),
+        shiny::strong(hdg_qnp),
         shiny::p(style = "font-size:0.85em; color:#888;",
                  "No QNP crosswalk entry for this stain — see qnp_stain_crosswalk in global.R.")
       ))
@@ -1741,7 +1729,7 @@ render_donor_metadata_qnp_block <- function(donor_id, image_region, image_stain 
   rows <- qnp_metadata[qnp_metadata$donor == donor_id & qnp_metadata$region %in% qnp_regions, , drop = FALSE]
   
   if (nrow(rows) == 0 || length(fields) == 0) {
-    return(shiny::tagList(leading_hr, header, shiny::p("No QNP data on record for this donor/region.")))
+    return(shiny::tagList(shiny::tags$hr(), shiny::strong(hdg_qnp), shiny::p("No QNP data on record for this donor/region.")))
   }
   
   # only label each row with its specific QNP region code when more than

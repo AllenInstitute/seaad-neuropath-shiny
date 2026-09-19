@@ -162,6 +162,17 @@ function(input, output, session) {
     req(length(entries) > 0)
     e1 <- entries[[1]]
     constraint_card(
+      "Donor" = shiny::tagList(e1$donor, donor_info_trigger(e1$donor, e1$region, e1$stain)),
+      "Region" = prettify_region(e1$region),
+      "Stain" = e1$stain
+    )
+  })
+  
+  output$home_donor_metadata <- renderUI({
+    entries <- home_entries_rv()
+    req(length(entries) > 0)
+    e1 <- entries[[1]]
+    constraint_card(
       "donor" = shiny::tagList(e1$donor, donor_info_trigger(e1$donor, e1$region, e1$stain)),
       "region" = smart_lowercase(prettify_region(e1$region)),
       "stain" = smart_lowercase(e1$stain)
@@ -230,7 +241,7 @@ function(input, output, session) {
   })
   
   output$dstain_annotation_ui <- renderUI({ render_annotation_master_ui(dstain_entries_rv(), id_prefix = "dstain", varying_field = "stain") })
-  output$dstain_viewer_grid   <- renderUI({ render_viewer_grid_ui(dstain_entries_rv(), label_field = "stain", donor_info_style = "qnp_only", qnp_icon = "file-earmark-bar-graph", qnp_all_fields = TRUE) })
+  output$dstain_viewer_grid   <- renderUI({ render_viewer_grid_ui(dstain_entries_rv(), label_field = "stain", show_donor_info = TRUE) })
   
   observeEvent(input$dstain_load_btn, {
     req(input$dstain_donor, input$dstain_region, length(input$dstain_stains) > 0,
@@ -274,18 +285,6 @@ function(input, output, session) {
     updateSelectInput(session, "sdonor_donors_manual", choices = valid_donors, selected = character(0))
   }, ignoreInit = TRUE)
   
-  # the manual picker's label lives as separate static text (its own
-  # selectizeInput label is NULL — see ui.r), so the count has to update
-  # this output instead of updateSelectInput()'s own label argument.
-  output$sdonor_manual_label_ui <- renderUI({
-    valid_donors <- if (is_selected(input$sdonor_stain) && is_selected(input$sdonor_region)) {
-      get_donors_with_stain_region(input$sdonor_stain, input$sdonor_region)
-    } else {
-      character(0)
-    }
-    tags$strong(dropdown_label("Donors to compare", valid_donors))
-  })
-  
   output$sdonor_manual_count_ui <- renderUI({
     tags$div(sprintf("%d/%d selected", length(input$sdonor_donors_manual), donor_compare_cap), style = "margin-top:4px; font-size:0.9em; color:#666;")
   })
@@ -303,7 +302,7 @@ function(input, output, session) {
   })
   
   output$sdonor_annotation_ui <- renderUI({ render_annotation_master_ui(sdonor_entries_rv(), id_prefix = "sdonor", varying_field = "donor") })
-  output$sdonor_viewer_grid   <- renderUI({ render_viewer_grid_ui(sdonor_entries_rv(), label_field = "donor", donor_info_style = "combined") })
+  output$sdonor_viewer_grid   <- renderUI({ render_viewer_grid_ui(sdonor_entries_rv(), label_field = "donor", show_donor_info = TRUE, donor_info_filter_link = TRUE) })
   
   observeEvent(input$sdonor_load_btn, {
     req(input$sdonor_stain, input$sdonor_region, nzchar(input$sdonor_stain), nzchar(input$sdonor_region))
@@ -383,7 +382,7 @@ function(input, output, session) {
     entries <- sregion_entries_rv()
     req(length(entries) > 0)
     e1 <- entries[[1]]
-    constraint_card("donor" = shiny::tagList(e1$donor, donor_info_trigger(e1$donor, NULL, e1$stain)), "stain" = smart_lowercase(e1$stain))
+    constraint_card("Donor" = shiny::tagList(e1$donor, donor_info_trigger(e1$donor, NULL, e1$stain)), "Stain" = e1$stain)
   })
   
   output$sregion_reset_zoom_btn_ui <- renderUI({
@@ -476,28 +475,20 @@ function(input, output, session) {
   )
   
   # shared handler for every page's donor-info icon (donor_info_trigger(),
-  # functions.r) — one modal for Home/Compare Stains/Compare Regions'
-  # context cards and Compare Donors' per-image icons. region/stain arrive
-  # as empty strings when donor_info_trigger() was given NULL for either
-  # (Compare Regions, which has no single fixed region).
+  # functions.r) — one modal mechanism for Home's context card, Compare
+  # Stains'/Compare Regions' context card, and Compare Donors' per-image
+  # icons, all driven by the SAME click event rather than four separate
+  # handlers. region/stain arrive as empty strings (not real values) when
+  # donor_info_trigger() was given NULL for either, which happens on
+  # Compare Regions specifically (no single fixed region there).
   observeEvent(input$donor_info_click, {
     info <- input$donor_info_click
     req(is_selected(info$donor))
     region <- if (!is.null(info$region) && nzchar(info$region)) info$region else NULL
     stain  <- if (!is.null(info$stain)  && nzchar(info$stain))  info$stain  else NULL
-    mode <- info$mode %||% "combined"
-    all_fields <- isTRUE(info$allFields)
-    
-    content <- switch(mode,
-                      "demo" = render_donor_demo_clinical(info$donor),
-                      "qnp"  = render_donor_metadata_qnp_block(info$donor, region, stain, standalone = TRUE, all_fields = all_fields),
-                      render_donor_metadata_list(info$donor, image_region = region, image_stain = stain)
-    )
-    title_suffix <- switch(mode, "demo" = " — demographic & clinical", "qnp" = " — QNP", "")
-    
     showModal(modalDialog(
-      title = paste0("Donor ", info$donor, title_suffix),
-      content,
+      title = paste("Donor", info$donor),
+      render_donor_metadata_list(info$donor, image_region = region, image_stain = stain, show_filter_donors_link = isTRUE(info$filterLink)),
       easyClose = TRUE,
       size = "l",
       footer = modalButton("Close")
@@ -593,7 +584,7 @@ function(input, output, session) {
   reset_sdonor_page <- function() {
     sdonor_entries_rv(list())
     updateSelectInput(session, "sdonor_stain", selected = "")
-    updateSelectInput(session, "sdonor_region", label = dropdown_label("Region", character(0)), choices = with_placeholder(character(0)))
+    updateSelectInput(session, "sdonor_region", choices = with_placeholder(character(0)))
     updateRadioButtons(session, "sdonor_subset_mode", selected = "manual")
     updateSelectInput(session, "sdonor_donors_manual", choices = donor_choices, selected = character(0))
     updateSliderInput(session, "sdonor_random_n", value = donor_compare_min)

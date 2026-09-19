@@ -380,147 +380,121 @@ tagList(
                           )
                         )
                ),
-               
-               # =========================================================================
-               # compare donors — constraints: single stain, single region. varies: donor.
-               # =========================================================================
-               tabPanel("Compare Donors",
-                        sidebarLayout(
-                          sidebarPanel(
-                            width = 4,
-                            selectInput("sdonor_stain", dropdown_label("Stain", all_stains), choices = with_placeholder(all_stains)),
-                            tags$hr(),
-                            selectInput("sdonor_region", "Region", choices = with_placeholder(character(0))),
-                            tags$hr(),
-                            radioButtons(
-                              "sdonor_subset_mode", "Donors",
-                              choices = stats::setNames(
-                                c("manual", "random", "metadata"),
-                                c("Select specific donors", "Select donors at random", "Filter by metadata")
-                              ),
-                              selected = "manual"
-                            ),
-                            conditionalPanel(
-                              condition = "input.sdonor_subset_mode == 'manual'",
-                              # choices here are narrowed server-side to only donors that actually
-                              # have this stain+region combination once both are picked.
-                              # maxItems enforces the cap natively (selectize simply won't
-                              # accept an 11th pick) — selectizeInput() (rather than
-                              # selectInput()) is what exposes that option.
-                              tags$div(
-                                style = "display:flex; align-items:center; gap:6px;",
-                                uiOutput("sdonor_manual_label_ui", inline = TRUE),
-                                bslib::tooltip(tags$span(style = "color:#000;", bsicons::bs_icon("info-circle-fill")), tt_donor_compare_cap, placement = "right")
-                              ),
-                              selectizeInput(
-                                "sdonor_donors_manual", label = NULL,
-                                choices = donor_choices, multiple = TRUE,
-                                options = list(maxItems = donor_compare_cap)
-                              ),
-                              uiOutput("sdonor_manual_count_ui")
-                            ),
-                            conditionalPanel(
-                              condition = "input.sdonor_subset_mode == 'random'",
-                              sliderInput("sdonor_random_n", "Number of donors", min = donor_compare_min, max = donor_compare_cap, value = donor_compare_min, step = 1)
-                            ),
-                            conditionalPanel(
-                              condition = "input.sdonor_subset_mode == 'metadata'",
-                              uiOutput("sdonor_metadata_accordion_ui")
-                            ),
-                            tags$hr(),
-                            checkboxInput("sdonor_show_overlay", "Show mask/analysis overlay", value = FALSE),
-                            conditionalPanel(
-                              condition = "input.sdonor_show_overlay",
-                              sliderInput("sdonor_overlay_opacity", "Overlay opacity", min = 0, max = 1, value = 0, step = 0.05)
-                            ),
-                            actionButton("sdonor_load_btn", "Load / Compare", class = "btn-primary"),
-                            actionButton("sdonor_reset_btn", "Reset", style = sprintf("margin-left:8px; background-color:%s; border-color:%s; color:#fff;", reset_button_color, reset_button_color))
-                          ),
-                          mainPanel(
-                            width = 8,
-                            uiOutput("sdonor_context_card"),
-                            tags$div(style = "height:10px;"),
-                            sync_zoom_control("sdonor_sync_zoom", default_checked = TRUE),
-                            uiOutput("sdonor_annotation_ui"),
-                            tags$div(style = "height:18px;"),
-                            uiOutput("sdonor_viewer_grid"),
-                            tags$div(style = "height:10px;"),
-                            uiOutput("sdonor_reset_zoom_btn_ui")
-                          )
-                        )
+               mainPanel(
+                 width = 8,
+                 uiOutput("dstain_context_card"),   # only appears once Load has been clicked
+                 tags$div(style = "height:10px;"),
+                 sync_zoom_control("dstain_sync_zoom", default_checked = TRUE),
+                 uiOutput("dstain_annotation_ui"),
+                 tags$div(style = "height:18px;"),
+                 uiOutput("dstain_viewer_grid"),
+                 tags$div(style = "height:10px;"),
+                 uiOutput("dstain_reset_zoom_btn_ui")
+               )
+             )
+    ),
+    
+    # =========================================================================
+    # compare donors — constraints: single stain, single region. varies: donor.
+    # =========================================================================
+    tabPanel("Compare Donors",
+             sidebarLayout(
+               sidebarPanel(
+                 width = 4,
+                 selectInput("sdonor_stain", "Stain", choices = with_placeholder(all_stains)),
+                 selectInput("sdonor_region", "Region", choices = with_placeholder(character(0))),
+                 radioButtons(
+                   "sdonor_subset_mode", "Donors",
+                   choices = stats::setNames(
+                     c("manual", "random", "metadata"),
+                     c("Select specific donors", "Select donors at random", "Filter by metadata")
+                   ),
+                   selected = "manual"
+                 ),
+                 conditionalPanel(
+                   condition = "input.sdonor_subset_mode == 'manual'",
+                   # choices here are narrowed server-side to only donors that actually
+                   # have this stain+region combination once both are picked.
+                   # maxItems enforces the cap natively (selectize simply won't
+                   # accept an 11th pick) — selectizeInput() (rather than
+                   # selectInput()) is what exposes that option.
+                   tags$div(
+                     style = "display:flex; align-items:center; gap:6px;",
+                     tags$strong("Donors to compare"),
+                     bslib::tooltip(tags$span(style = "color:#000;", bsicons::bs_icon("info-circle-fill")), tt_donor_compare_cap, placement = "right")
+                   ),
+                   selectizeInput(
+                     "sdonor_donors_manual", label = NULL,
+                     choices = donor_choices, multiple = TRUE,
+                     options = list(maxItems = donor_compare_cap)
+                   ),
+                   uiOutput("sdonor_manual_count_ui")
+                 ),
+                 conditionalPanel(
+                   condition = "input.sdonor_subset_mode == 'random'",
+                   sliderInput("sdonor_random_n", "Number of donors", min = donor_compare_min, max = donor_compare_cap, value = donor_compare_min, step = 1)
+                 ),
+                 conditionalPanel(
+                   condition = "input.sdonor_subset_mode == 'metadata'",
+                   uiOutput("sdonor_metadata_accordion_ui")
+                 ),
+                 tags$hr(),
+                 checkboxInput("sdonor_show_overlay", "Show mask/analysis overlay", value = FALSE),
+                 conditionalPanel(
+                   condition = "input.sdonor_show_overlay",
+                   sliderInput("sdonor_overlay_opacity", "Overlay opacity", min = 0, max = 1, value = 0, step = 0.05)
+                 ),
+                 actionButton("sdonor_load_btn", "Load / Compare", class = "btn-primary"),
+                 actionButton("sdonor_reset_btn", "Reset", class = "btn-secondary", style = "margin-left:8px;")
                ),
-               
-               # =========================================================================
-               # compare regions — constraints: single donor, single stain.
-               # varies: region (every region that donor+stain combination has).
-               # =========================================================================
-               tabPanel("Compare Regions",
-                        sidebarLayout(
-                          sidebarPanel(
-                            width = 4,
-                            selectInput("sregion_donor", dropdown_label("Donor", donor_choices), choices = with_placeholder(donor_choices)),
-                            checkboxInput("sregion_filter_donors", "Filter donors by metadata", value = FALSE),
-                            conditionalPanel(
-                              condition = "input.sregion_filter_donors",
-                              uiOutput("sregion_metadata_accordion_ui")
-                            ),
-                            tags$hr(),
-                            selectInput("sregion_stain", "Stain", choices = with_placeholder(character(0))),
-                            tags$hr(),
-                            selectInput("sregion_regions", "Regions to compare", choices = character(0), multiple = TRUE),
-                            tags$hr(),
-                            checkboxInput("sregion_show_overlay", "Show mask/analysis overlay", value = FALSE),
-                            conditionalPanel(
-                              condition = "input.sregion_show_overlay",
-                              sliderInput("sregion_overlay_opacity", "Overlay opacity", min = 0, max = 1, value = 0, step = 0.05)
-                            ),
-                            actionButton("sregion_load_btn", "Load / Compare", class = "btn-primary"),
-                            actionButton("sregion_reset_btn", "Reset", style = sprintf("margin-left:8px; background-color:%s; border-color:%s; color:#fff;", reset_button_color, reset_button_color))
-                          ),
-                          mainPanel(
-                            width = 8,
-                            uiOutput("sregion_context_card"),
-                            tags$div(style = "height:10px;"),
-                            sync_zoom_control("sregion_sync_zoom", default_checked = FALSE),
-                            uiOutput("sregion_annotation_ui"),
-                            tags$div(style = "height:18px;"),
-                            uiOutput("sregion_viewer_grid"),  # shows a validation error here if nothing matches
-                            tags$div(style = "height:10px;"),
-                            uiOutput("sregion_reset_zoom_btn_ui")
-                          )
-                        )
+               mainPanel(
+                 width = 8,
+                 uiOutput("sdonor_context_card"),
+                 tags$div(style = "height:10px;"),
+                 sync_zoom_control("sdonor_sync_zoom", default_checked = TRUE),
+                 uiOutput("sdonor_annotation_ui"),
+                 tags$div(style = "height:18px;"),
+                 uiOutput("sdonor_viewer_grid"),
+                 tags$div(style = "height:10px;"),
+                 uiOutput("sdonor_reset_zoom_btn_ui")
                )
     ),
     
-    navbarMenu("QNP",
-               # =========================================================================
-               # identify donors — dedicated page combining demographic, clinical, AND
-               # QNP filters (the only page where QNP shows up now) to find a set of
-               # donors of interest, which can then be pulled into the Compare Donors
-               # page (see its "Use donor set" button) or copied out directly.
-               # =========================================================================
-               tabPanel(filter_donors_tab_name,
-                        sidebarLayout(
-                          sidebarPanel(
-                            width = 4,
-                            actionButton("iddonors_reset_btn", "Reset filters", style = sprintf("margin-bottom:12px; background-color:%s; border-color:%s; color:#fff;", reset_button_color, reset_button_color)),
-                            uiOutput("identify_donors_metadata_accordion_ui"),
-                            uiOutput("identify_donors_qnp_accordion_ui")
-                          ),
-                          mainPanel(
-                            width = 8,
-                            h4("Matching donors"),
-                            textOutput("identify_donors_count_text"),
-                            uiOutput("identify_donors_zero_warning_ui"),
-                            div(
-                              style = "margin:12px 0; display:flex; gap:8px;",
-                              downloadButton("iddonors_download_btn", "Download table (.csv)", style = sprintf("background-color:%s; border-color:%s; color:#fff;", action_button_color, action_button_color)),
-                              uiOutput("iddonors_copy_list_btn_ui", inline = TRUE)
-                            ),
-                            helpText("Click a donor's name for all metadata, including QNP values."),
-                            uiOutput("identify_donors_table_ui")
-                          )
-                        )
+    # =========================================================================
+    # compare regions — constraints: single donor, single stain.
+    # varies: region (every region that donor+stain combination has).
+    # =========================================================================
+    tabPanel("Compare Regions",
+             sidebarLayout(
+               sidebarPanel(
+                 width = 4,
+                 selectInput("sregion_donor", "Donor", choices = with_placeholder(donor_choices)),
+                 checkboxInput("sregion_filter_donors", "Filter donors by metadata", value = FALSE),
+                 conditionalPanel(
+                   condition = "input.sregion_filter_donors",
+                   uiOutput("sregion_metadata_accordion_ui")
+                 ),
+                 selectInput("sregion_stain", "Stain", choices = with_placeholder(character(0))),
+                 selectInput("sregion_regions", "Regions to compare", choices = character(0), multiple = TRUE),
+                 tags$hr(),
+                 checkboxInput("sregion_show_overlay", "Show mask/analysis overlay", value = FALSE),
+                 conditionalPanel(
+                   condition = "input.sregion_show_overlay",
+                   sliderInput("sregion_overlay_opacity", "Overlay opacity", min = 0, max = 1, value = 0, step = 0.05)
+                 ),
+                 actionButton("sregion_load_btn", "Load / Compare", class = "btn-primary"),
+                 actionButton("sregion_reset_btn", "Reset", class = "btn-secondary", style = "margin-left:8px;")
+               ),
+               mainPanel(
+                 width = 8,
+                 uiOutput("sregion_context_card"),
+                 tags$div(style = "height:10px;"),
+                 sync_zoom_control("sregion_sync_zoom", default_checked = FALSE),
+                 uiOutput("sregion_annotation_ui"),
+                 tags$div(style = "height:18px;"),
+                 uiOutput("sregion_viewer_grid"),  # shows a validation error here if nothing matches
+                 tags$div(style = "height:10px;"),
+                 uiOutput("sregion_reset_zoom_btn_ui")
                )
     ),
     

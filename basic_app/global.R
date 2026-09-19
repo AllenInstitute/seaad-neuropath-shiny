@@ -205,11 +205,13 @@ qnp_region_crosswalk <- list(
   "Middle Temporal Gyrus (MTG) and Superior Temporal Gyrus (STG)"    = c("MTG", "STG"),
   "Primary Visual Cortex - Extrastriate Occipital Cortex (V1C-ESOC)" = c("V1C", "ESOC")
 )
-# qnp_metadata$region also has AnG, CaH, FI, and ITG, with no
-# corresponding manifest/image region — expected, since QNP has more
-# region coverage than the image viewers. Those four stay fully usable on
-# Filter Donors (which reads qnp_metadata directly, not through this
-# crosswalk); they just never show up in an image-viewer donor popup.
+# NOTE: qnp_metadata$region also has AnG, CaH, FI, and ITG, which have no
+# corresponding manifest/image region at all — QNP genuinely has more
+# region coverage than the image viewers do, and that's expected. Those
+# four remain fully usable on the Filter Donors page (which reads
+# qnp_metadata directly, never through this crosswalk); they simply never
+# show up in an image-viewer donor-info popup, since there's no image for
+# them to be attached to.
 
 qnp_stain_crosswalk <- list(
   "Abeta (6E10) and IBA1"     = c("6E10", "Iba1", "6E10 x Iba1"),
@@ -253,11 +255,17 @@ app_theme <- bslib::bs_theme(primary = metadata_chart_color)
 #   hdg_<name> — a structural section heading, reused across pages
 #   msg_<name> — a notification message
 # ---------------------------------------------------------------------------
-lbl_app_title         <- "SEA-AD Neuropathology Viewer"
-lbl_brand_primary     <- "sea-ad"
-lbl_brand_secondary   <- "neuropathology viewer"
-lbl_scratchpad        <- "Scratchpad"
-lbl_reset_image_zoom  <- "Reset image zoom"
+lbl_app_title <- "SEA-AD Neuropathology Viewer"
+
+# Compare Donors page: max donors comparable at once — used for the radio
+# label, selectize's maxItems cap, the random-sample size, and the
+# metadata-mode truncation, so all four always agree with each other.
+donor_compare_cap <- 10
+donor_compare_min <- 2
+tt_donor_compare_cap <- sprintf("Number of donors that can be selected is capped at %d.", donor_compare_cap)
+
+lbl_scratchpad <- "Scratchpad"
+lbl_reset_image_zoom <- "Reset image zoom"
 
 hdg_annotations <- "annotations"
 hdg_shared      <- "shared"
