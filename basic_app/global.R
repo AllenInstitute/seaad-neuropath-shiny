@@ -24,23 +24,23 @@ source("R/functions.R")
 #     is authoritative and won't be touched by real data.
 # ---------------------------------------------------------------------------
 metadata_fields <- list(
-  list(id = "age_at_death",   label = "Age at death",     type = "range",
+  list(id = "age_at_death",   label = "age at death",     type = "range",
        csv_column = "Age at death (years)"),
-  list(id = "sex",             label = "Sex",              type = "select",
+  list(id = "sex",             label = "sex",              type = "select",
        choices = c("Female", "Male"), csv_column = "Sex"),
   list(id = "apoe_genotype",   label = "APOE genotype",    type = "select",
        choices = c("2/2", "2/3", "2/4", "3/3", "3/4", "4/4"), csv_column = "APOE genotype"),
-  list(id = "cog_status",      label = "Cognitive status", type = "select",
+  list(id = "cog_status",      label = "cognitive status", type = "select",
        choices = c("Dementia", "No dementia"), csv_column = "Cognitive status"),
   list(id = "adnc",            label = "ADNC",             type = "select",
        choices = c("Not AD", "Low", "Intermediate", "High"), csv_column = "ADNC"),
-  list(id = "thal_phase",      label = "Thal phase",       type = "select",
+  list(id = "thal_phase",      label = "thal phase",       type = "select",
        choices = as.character(0:5), csv_column = "Thal phase"),
-  list(id = "braak_stage",     label = "Braak stage",      type = "select",
+  list(id = "braak_stage",     label = "braak stage",      type = "select",
        choices = c("0", "I", "II", "III", "IV", "V", "VI"), csv_column = "Braak stage"),
   list(id = "cerad_score",     label = "CERAD score",      type = "select",
        choices = c("Absent", "Sparse", "Moderate", "Frequent"), csv_column = "CERAD score"),
-  list(id = "years_education", label = "Years of education", type = "range",
+  list(id = "years_education", label = "years of education", type = "range",
        csv_column = "Years of education (years)"),
   list(id = "cps",             label = "CPS", type = "range",
        csv_column = "Continuous Pseudo-progression Score")
@@ -91,8 +91,8 @@ all_stains      <- get_all_stains()
 # still fully usable everywhere else — filters, accordions, etc).
 # ---------------------------------------------------------------------------
 metadata_display_groups <- list(
-  "Demographic" = c("age_at_death", "sex", "apoe_genotype", "years_education"),
-  "Clinical"    = c("cog_status", "adnc", "thal_phase", "braak_stage", "cerad_score", "cps")
+  "demographic" = c("age_at_death", "sex", "apoe_genotype", "years_education"),
+  "clinical"    = c("cog_status", "adnc", "thal_phase", "braak_stage", "cerad_score", "cps")
 )
 
 # ---------------------------------------------------------------------------
@@ -241,11 +241,18 @@ qnp_fields_all <- qnp_fields
 # Iba1 (and their colocalization) QNP stain groups.
 # ---------------------------------------------------------------------------
 qnp_region_crosswalk <- list(
-  "dorsolateral-prefrontal-cortex"                     = "dorsolateral-prefrontal-cortex",
-  "hippocampus-medial-entorhinal-cortex"                = "hippocampus-medial-entorhinal-cortex",
-  "middle-temporal-gyrus-and-superior-temporal-gyrus"   = "middle-temporal-gyrus-and-superior-temporal-gyrus",
-  "primary-visual-cortex-extrastriate-occipital-cortex" = "primary-visual-cortex-extrastriate-occipital-cortex"
+  "Dorsolateral Prefrontal Cortex (DLPFC)"                           = "DFC",
+  "Medial Entorhinal Cortex and Hippocampus (MEC-HIP)"               = c("MEC", "HIP"),
+  "Middle Temporal Gyrus (MTG) and Superior Temporal Gyrus (STG)"    = c("MTG", "STG"),
+  "Primary Visual Cortex - Extrastriate Occipital Cortex (V1C-ESOC)" = c("V1C", "ESOC")
 )
+# NOTE: qnp_metadata$region also has AnG, CaH, FI, and ITG, which have no
+# corresponding manifest/image region at all — QNP genuinely has more
+# region coverage than the image viewers do, and that's expected. Those
+# four remain fully usable on the Filter Donors page (which reads
+# qnp_metadata directly, never through this crosswalk); they simply never
+# show up in an image-viewer donor-info popup, since there's no image for
+# them to be attached to.
 
 qnp_stain_crosswalk <- list(
   "Abeta (6E10) and IBA1"     = c("6E10", "Iba1", "6E10 x Iba1"),
@@ -263,22 +270,39 @@ qnp_stain_crosswalk <- list(
 # qnp_fields was first defined above, so that's what this filters on.
 qnp_fields <- Filter(function(f) grepl("^pct_", f$id), qnp_fields)
 
-# shared theme — passed to navbarPage(theme = ...) in ui.R. defined here
-# (rather than at the bottom) since metadata_chart_color, below, needs it.
-app_theme <- bslib::bs_theme(bootswatch = "lux")
+# shared "brand" color — used for histoslider/histogram bars AND as the
+# Bootstrap theme's own "primary" color (buttons, links, etc.) below, so
+# R-rendered elements and Bootstrap's built-in styling can't drift apart.
+# NOTE: requested as "#646FF", which is only 5 hex digits (invalid — a hex
+# color needs 6). Completed here to "#6464FF" as a best guess; confirm or
+# correct if this isn't the intended color.
+metadata_chart_color <- "#6464FF"
 
-# shared color used for BOTH histoslider bars and the categorical histogram
-# bars (register_metadata_histograms()), so all metadata charts look
-# consistent — pulled directly from the Lux theme's actual "primary" purple
-# rather than a hardcoded guess, so it always matches whatever bootswatch is
-# set above even if that changes later.
-# shared color used for BOTH histoslider bars and the categorical histogram
-# bars (register_metadata_histograms()), so all metadata charts look
-# consistent. NOTE: previously this was derived via bslib::bs_get_variables()
-# to auto-match the theme's primary color, but that returned an unresolved
-# Sass reference (rendered literally as black) rather than a compiled hex
-# value — so it's hardcoded directly here instead.
-metadata_chart_color <- "#7952b3"
+# muted tint of metadata_chart_color, used for the Filter Donors table's
+# striped rows (in place of Bootstrap's default gray stripe).
+table_stripe_color <- "#E8E9FF"
+
+# requested sidebar background color.
+sidebar_bg_color <- "#ffffff"
+
+# thin divider color between sidebar sections.
+sidebar_divider_color <- "#DED9D1"
+
+# shared theme — passed to navbarPage(theme = ...) in ui.R. Deliberately
+# NOT using a bootswatch preset (e.g. the previous "lux") anymore — Lux's
+# own opinionated styles, all-caps navbar text in particular, directly
+# fought the custom navbar look requested, so this builds from plain
+# Bootstrap 5 instead with just the primary color overridden.
+app_theme <- bslib::bs_theme(primary = metadata_chart_color)
+
+# navbar brand — two differently-colored text segments, lowercase per
+# request. lbl_app_title (below) stays a plain string for the browser
+# tab's actual <title>, since the navbar brand itself becomes custom HTML.
+lbl_brand_primary <- "sea-ad"
+lbl_brand_secondary <- "neuropathology viewer"
+
+# color for the "sea-ad" brand text specifically.
+brand_primary_color <- "#aaa39f"
 
 # light lavender background used for card/box accents throughout (donor
 # popup QNP boxes, the constraint card on comparison pages, etc.) — a
@@ -318,13 +342,31 @@ filter_donors_tab_name <- "Filter Donors"
 #   hdg_<name> — a structural section heading, reused across pages
 #   msg_<name> — a notification/status message (showNotification())
 # ---------------------------------------------------------------------------
-lbl_app_title <- "SEA-AD Viewer"
+lbl_app_title <- "SEA-AD Neuropathology Viewer"
+
+# Compare Donors page: max donors comparable at once — used for the radio
+# label, selectize's maxItems cap, the random-sample size, and the
+# metadata-mode truncation, so all four always agree with each other.
+donor_compare_cap <- 10
+donor_compare_min <- 2
+tt_donor_compare_cap <- sprintf("Number of donors that can be selected is capped at %d.", donor_compare_cap)
 
 lbl_scratchpad <- "Scratchpad"
 lbl_reset_image_zoom <- "Reset image zoom"
 
-hdg_annotations <- "Annotations"
-hdg_shared <- "Shared"
+# requested color for Reset image zoom, Download table, and Copy donor
+# list buttons.
+action_button_color <- "#dc9600"
+
+# muted/light tint of action_button_color, used for the context card
+# background — the only genuinely yellow color currently in the app is
+# action_button_color itself (the table stripe color is blue-purple, not
+# yellow), so this is a lightened version of that rather than the bold
+# button color directly.
+context_card_bg_color <- "#FCE9C2"
+
+hdg_annotations <- "annotations"
+hdg_shared <- "shared"
 hdg_qnp <- "QNP"
 
 msg_filters_reset <- "Filters reset."

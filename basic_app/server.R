@@ -44,7 +44,7 @@ function(input, output, session) {
     div(
       style = sprintf(
         "padding:10px 16px; margin-bottom:12px; background:%s; border-left:4px solid %s; border-radius:4px;",
-        accent_bg_color, metadata_chart_color
+        context_card_bg_color, action_button_color
       ),
       tagList(lapply(names(pairs), function(k) {
         tags$span(style = "margin-right:24px;", tags$strong(paste0(k, ": ")), pairs[[k]])
@@ -117,32 +117,39 @@ function(input, output, session) {
     } else {
       donor_choices
     }
-    updateSelectInput(session, "home_donor", choices = with_placeholder(filtered))
+    updateSelectInput(session, "home_donor", label = dropdown_label("Donor", filtered), choices = with_placeholder(filtered))
   })
   
   observeEvent(input$home_donor, {
     req(input$home_donor, nzchar(input$home_donor))
-    updateSelectInput(session, "home_region", choices = with_placeholder(get_regions_for_donor(input$home_donor)))
+    home_regions <- get_regions_for_donor(input$home_donor)
+    updateSelectInput(session, "home_region", label = dropdown_label("Region", home_regions), choices = with_placeholder(home_regions))
   })
   
   observeEvent(list(input$home_donor, input$home_region), {
     req(input$home_donor, input$home_region, nzchar(input$home_donor), nzchar(input$home_region))
-    updateSelectInput(session, "home_stain",
-                      choices = with_placeholder(get_stain_choices_for_donor_region(input$home_donor, input$home_region)))
+    home_stains <- get_stain_choices_for_donor_region(input$home_donor, input$home_region)
+    updateSelectInput(session, "home_stain", label = dropdown_label("Stain", home_stains), choices = with_placeholder(home_stains))
   }, ignoreInit = TRUE)
   
   output$home_annotation_ui <- renderUI({ render_annotation_master_ui(home_entries_rv(), id_prefix = "home") })
   output$home_viewer_grid   <- renderUI({ render_viewer_grid_ui(home_entries_rv(), label_field = "stain") })
-  output$home_donor_metadata <- renderUI({
+  
+  output$home_context_card <- renderUI({
     entries <- home_entries_rv()
     req(length(entries) > 0)
-    render_donor_metadata_card(entries[[1]]$donor)
+    e1 <- entries[[1]]
+    constraint_card(
+      "donor" = shiny::tagList(e1$donor, donor_info_trigger(e1$donor, e1$region, e1$stain)),
+      "region" = smart_lowercase(prettify_region(e1$region)),
+      "stain" = smart_lowercase(e1$stain)
+    )
   })
   
   output$home_reset_zoom_btn_ui <- renderUI({
     req(length(home_entries_rv()) > 0)
     actionButton("home_reset_zoom_btn", lbl_reset_image_zoom,
-                 style = "background-color:#000; border-color:#000; color:#fff; font-size:16px;")
+                 style = sprintf("background-color:%s; border-color:%s; color:#fff; font-size:16px;", action_button_color, action_button_color))
   })
   
   observeEvent(input$home_load_btn, {
@@ -184,18 +191,19 @@ function(input, output, session) {
     } else {
       donor_choices
     }
-    updateSelectInput(session, "dstain_donor", choices = with_placeholder(filtered))
+    updateSelectInput(session, "dstain_donor", label = dropdown_label("Donor", filtered), choices = with_placeholder(filtered))
   })
   
   observeEvent(input$dstain_donor, {
     req(input$dstain_donor, nzchar(input$dstain_donor))
-    updateSelectInput(session, "dstain_region", choices = with_placeholder(get_regions_for_donor(input$dstain_donor)))
+    dstain_regions <- get_regions_for_donor(input$dstain_donor)
+    updateSelectInput(session, "dstain_region", label = dropdown_label("Region", dstain_regions), choices = with_placeholder(dstain_regions))
   })
   
   observeEvent(list(input$dstain_donor, input$dstain_region), {
     req(input$dstain_donor, input$dstain_region, nzchar(input$dstain_donor), nzchar(input$dstain_region))
-    updateSelectInput(session, "dstain_stains",
-                      choices = get_stain_choices_for_donor_region(input$dstain_donor, input$dstain_region))
+    dstain_stain_choices <- get_stain_choices_for_donor_region(input$dstain_donor, input$dstain_region)
+    updateSelectInput(session, "dstain_stains", label = dropdown_label("Stains to compare", dstain_stain_choices), choices = dstain_stain_choices)
   }, ignoreInit = TRUE)
   
   # card is built from the loaded entries, so it appears/disappears together with the grid
@@ -203,17 +211,17 @@ function(input, output, session) {
     entries <- dstain_entries_rv()
     req(length(entries) > 0)
     e1 <- entries[[1]]
-    constraint_card("Donor" = e1$donor, "Region" = prettify_region(e1$region))
+    constraint_card("donor" = shiny::tagList(e1$donor, donor_info_trigger(e1$donor, mode = "demo", icon = "person-vcard")), "region" = smart_lowercase(prettify_region(e1$region)))
   })
   
   output$dstain_reset_zoom_btn_ui <- renderUI({
     req(length(dstain_entries_rv()) > 0)
     actionButton("dstain_reset_zoom_btn", lbl_reset_image_zoom,
-                 style = "background-color:#000; border-color:#000; color:#fff; font-size:16px;")
+                 style = sprintf("background-color:%s; border-color:%s; color:#fff; font-size:16px;", action_button_color, action_button_color))
   })
   
   output$dstain_annotation_ui <- renderUI({ render_annotation_master_ui(dstain_entries_rv(), id_prefix = "dstain", varying_field = "stain") })
-  output$dstain_viewer_grid   <- renderUI({ render_viewer_grid_ui(dstain_entries_rv(), label_field = "stain") })
+  output$dstain_viewer_grid   <- renderUI({ render_viewer_grid_ui(dstain_entries_rv(), label_field = "stain", donor_info_style = "qnp_only", qnp_icon = "file-earmark-bar-graph") })
   
   observeEvent(input$dstain_load_btn, {
     req(input$dstain_donor, input$dstain_region, length(input$dstain_stains) > 0,
@@ -256,7 +264,8 @@ function(input, output, session) {
   
   observeEvent(input$sdonor_stain, {
     req(input$sdonor_stain, nzchar(input$sdonor_stain))
-    updateSelectInput(session, "sdonor_region", choices = with_placeholder(get_regions_for_stain(input$sdonor_stain)))
+    sdonor_regions <- get_regions_for_stain(input$sdonor_stain)
+    updateSelectInput(session, "sdonor_region", label = dropdown_label("Region", sdonor_regions), choices = with_placeholder(sdonor_regions))
   })
   
   # keep the manual donor list free of dead-end choices: only donors that
@@ -267,29 +276,65 @@ function(input, output, session) {
     updateSelectInput(session, "sdonor_donors_manual", choices = valid_donors, selected = character(0))
   }, ignoreInit = TRUE)
   
+  # the manual picker's label lives as separate static text (its own
+  # selectizeInput label is NULL — see ui.r), so the count has to update
+  # this output instead of updateSelectInput()'s own label argument.
+  output$sdonor_manual_label_ui <- renderUI({
+    valid_donors <- if (is_selected(input$sdonor_stain) && is_selected(input$sdonor_region)) {
+      get_donors_with_stain_region(input$sdonor_stain, input$sdonor_region)
+    } else {
+      character(0)
+    }
+    tags$strong(dropdown_label("Donors to compare", valid_donors))
+  })
+  
+  output$sdonor_manual_count_ui <- renderUI({
+    tags$div(sprintf("%d/%d selected", length(input$sdonor_donors_manual), donor_compare_cap), style = "margin-top:4px; font-size:0.9em; color:#666;")
+  })
+  
   output$sdonor_context_card <- renderUI({
     entries <- sdonor_entries_rv()
     req(length(entries) > 0)
     e1 <- entries[[1]]
-    constraint_card("Stain" = e1$stain, "Region" = prettify_region(e1$region))
+    constraint_card("stain" = smart_lowercase(e1$stain), "region" = smart_lowercase(prettify_region(e1$region)))
   })
   
   output$sdonor_reset_zoom_btn_ui <- renderUI({
     req(length(sdonor_entries_rv()) > 0)
     actionButton("sdonor_reset_zoom_btn", lbl_reset_image_zoom,
-                 style = "background-color:#000; border-color:#000; color:#fff; font-size:16px;")
+                 style = sprintf("background-color:%s; border-color:%s; color:#fff; font-size:16px;", action_button_color, action_button_color))
   })
   
   output$sdonor_annotation_ui <- renderUI({ render_annotation_master_ui(sdonor_entries_rv(), id_prefix = "sdonor", varying_field = "donor") })
-  output$sdonor_viewer_grid   <- renderUI({ render_viewer_grid_ui(sdonor_entries_rv(), label_field = "donor", show_donor_info = TRUE) })
+  output$sdonor_viewer_grid   <- renderUI({ render_viewer_grid_ui(sdonor_entries_rv(), label_field = "donor", donor_info_style = "combined") })
   
   observeEvent(input$sdonor_load_btn, {
     req(input$sdonor_stain, input$sdonor_region, nzchar(input$sdonor_stain), nzchar(input$sdonor_region))
     
     donors <- switch(input$sdonor_subset_mode,
-                     "all"      = donor_choices,
+                     "random" = {
+                       # sample from donors that actually HAVE a valid image for this
+                       # stain+region — sampling from every donor blindly could pick
+                       # ones with no matching slot, silently ending up with fewer
+                       # than requested once those get filtered out below.
+                       valid_for_selection <- get_donors_with_stain_region(input$sdonor_stain, input$sdonor_region)
+                       n_wanted <- input$sdonor_random_n
+                       if (is.null(n_wanted) || is.na(n_wanted)) n_wanted <- donor_compare_min
+                       n_wanted <- max(donor_compare_min, min(donor_compare_cap, round(n_wanted)))
+                       sample(valid_for_selection, size = min(n_wanted, length(valid_for_selection)))
+                     },
                      "manual"   = input$sdonor_donors_manual,
-                     "metadata" = filter_donors_by_metadata(donor_metadata, input, "sdonor")
+                     "metadata" = {
+                       matched <- filter_donors_by_metadata(donor_metadata, input, "sdonor")
+                       if (length(matched) > donor_compare_cap) {
+                         showNotification(
+                           sprintf("%d donors matched — showing a random %d (capped).", length(matched), donor_compare_cap),
+                           type = "warning"
+                         )
+                         matched <- sample(matched, donor_compare_cap)
+                       }
+                       matched
+                     }
     )
     
     entries <- lapply(donors, function(donor) {
@@ -333,36 +378,36 @@ function(input, output, session) {
     } else {
       donor_choices
     }
-    updateSelectInput(session, "sregion_donor", choices = with_placeholder(filtered))
+    updateSelectInput(session, "sregion_donor", label = dropdown_label("Donor", filtered), choices = with_placeholder(filtered))
   })
   
   observeEvent(input$sregion_donor, {
     req(input$sregion_donor, nzchar(input$sregion_donor))
-    updateSelectInput(session, "sregion_stain",
-                      choices = with_placeholder(get_stain_choices_for_donor(input$sregion_donor)))
+    sregion_stains <- get_stain_choices_for_donor(input$sregion_donor)
+    updateSelectInput(session, "sregion_stain", label = dropdown_label("Stain", sregion_stains), choices = with_placeholder(sregion_stains))
   })
   
   observeEvent(list(input$sregion_donor, input$sregion_stain), {
     req(input$sregion_donor, input$sregion_stain, nzchar(input$sregion_donor), nzchar(input$sregion_stain))
-    updateSelectInput(session, "sregion_regions",
-                      choices = get_regions_with_stain_for_donor(input$sregion_donor, input$sregion_stain))
+    sregion_region_choices <- get_regions_with_stain_for_donor(input$sregion_donor, input$sregion_stain)
+    updateSelectInput(session, "sregion_regions", label = dropdown_label("Regions to compare", sregion_region_choices), choices = sregion_region_choices)
   }, ignoreInit = TRUE)
   
   output$sregion_context_card <- renderUI({
     entries <- sregion_entries_rv()
     req(length(entries) > 0)
     e1 <- entries[[1]]
-    constraint_card("Donor" = e1$donor, "Stain" = e1$stain)
+    constraint_card("donor" = shiny::tagList(e1$donor, donor_info_trigger(e1$donor, NULL, e1$stain)), "stain" = smart_lowercase(e1$stain))
   })
   
   output$sregion_reset_zoom_btn_ui <- renderUI({
     req(length(sregion_entries_rv()) > 0)
     actionButton("sregion_reset_zoom_btn", lbl_reset_image_zoom,
-                 style = "background-color:#000; border-color:#000; color:#fff; font-size:16px;")
+                 style = sprintf("background-color:%s; border-color:%s; color:#fff; font-size:16px;", action_button_color, action_button_color))
   })
   
   output$sregion_annotation_ui <- renderUI({ render_annotation_master_ui(sregion_entries_rv(), id_prefix = "sregion", varying_field = "region") })
-  output$sregion_viewer_grid   <- renderUI({ render_viewer_grid_ui(sregion_entries_rv(), label_field = "region") })
+  output$sregion_viewer_grid   <- renderUI({ render_viewer_grid_ui(sregion_entries_rv(), label_field = "region", donor_info_style = "qnp_only", qnp_icon = "file-earmark-bar-graph") })
   
   observeEvent(input$sregion_load_btn, {
     req(input$sregion_donor, input$sregion_stain, length(input$sregion_regions) > 0,
@@ -456,6 +501,36 @@ function(input, output, session) {
     }
   )
   
+  # shared handler for every page's donor-info icon (donor_info_trigger(),
+  # functions.r) — one modal mechanism for Home's context card, Compare
+  # Stains'/Compare Regions' context card, and Compare Donors' per-image
+  # icons, all driven by the SAME click event rather than four separate
+  # handlers. region/stain arrive as empty strings (not real values) when
+  # donor_info_trigger() was given NULL for either, which happens on
+  # Compare Regions specifically (no single fixed region there).
+  observeEvent(input$donor_info_click, {
+    info <- input$donor_info_click
+    req(is_selected(info$donor))
+    region <- if (!is.null(info$region) && nzchar(info$region)) info$region else NULL
+    stain  <- if (!is.null(info$stain)  && nzchar(info$stain))  info$stain  else NULL
+    mode <- info$mode %||% "combined"
+    
+    content <- switch(mode,
+                      "demo" = render_donor_demo_clinical(info$donor),
+                      "qnp"  = render_donor_metadata_qnp_block(info$donor, region, stain, standalone = TRUE),
+                      render_donor_metadata_list(info$donor, image_region = region, image_stain = stain)
+    )
+    title_suffix <- switch(mode, "demo" = " — demographic & clinical", "qnp" = " — QNP", "")
+    
+    showModal(modalDialog(
+      title = paste0("Donor ", info$donor, title_suffix),
+      content,
+      easyClose = TRUE,
+      size = "l",
+      footer = modalButton("Close")
+    ))
+  })
+  
   # tracks which donor's popup is currently open — needed now that the
   # QNP section inside it is region-dependent and reactive (a radio
   # button INSIDE the modal), not a one-shot static render.
@@ -493,7 +568,8 @@ function(input, output, session) {
   output$iddonors_copy_list_btn_ui <- renderUI({
     list_text <- paste(sort(identify_matching_donors()), collapse = ", ")
     tags$button(
-      "Copy donor list", class = "btn btn-secondary",
+      bsicons::bs_icon("copy"), "Copy donor list", class = "btn",
+      style = sprintf("background-color:transparent; border:none; color:%s;", metadata_chart_color),
       `data-copy-text` = list_text,
       onclick = "copyTextRobust(this.getAttribute('data-copy-text'), this)"
     )
@@ -519,8 +595,8 @@ function(input, output, session) {
     home_entries_rv(list())
     updateCheckboxInput(session, "home_filter_donors", value = FALSE)
     updateSelectInput(session, "home_donor", selected = "")
-    updateSelectInput(session, "home_region", choices = with_placeholder(character(0)))
-    updateSelectInput(session, "home_stain", choices = with_placeholder(character(0)))
+    updateSelectInput(session, "home_region", label = dropdown_label("Region", character(0)), choices = with_placeholder(character(0)))
+    updateSelectInput(session, "home_stain", label = dropdown_label("Stain", character(0)), choices = with_placeholder(character(0)))
     updateCheckboxInput(session, "home_show_overlay", value = FALSE)
     updateSliderInput(session, "home_overlay_opacity", value = 0)
   }
@@ -529,8 +605,8 @@ function(input, output, session) {
     dstain_entries_rv(list())
     updateCheckboxInput(session, "dstain_filter_donors", value = FALSE)
     updateSelectInput(session, "dstain_donor", selected = "")
-    updateSelectInput(session, "dstain_region", choices = with_placeholder(character(0)))
-    updateSelectInput(session, "dstain_stains", choices = character(0), selected = character(0))
+    updateSelectInput(session, "dstain_region", label = dropdown_label("Region", character(0)), choices = with_placeholder(character(0)))
+    updateSelectInput(session, "dstain_stains", label = dropdown_label("Stains to compare", character(0)), choices = character(0), selected = character(0))
     updateCheckboxInput(session, "dstain_show_overlay", value = FALSE)
     updateSliderInput(session, "dstain_overlay_opacity", value = 0)
     updateCheckboxInput(session, "dstain_sync_zoom", value = TRUE)
@@ -539,9 +615,10 @@ function(input, output, session) {
   reset_sdonor_page <- function() {
     sdonor_entries_rv(list())
     updateSelectInput(session, "sdonor_stain", selected = "")
-    updateSelectInput(session, "sdonor_region", choices = with_placeholder(character(0)))
-    updateRadioButtons(session, "sdonor_subset_mode", selected = "all")
+    updateSelectInput(session, "sdonor_region", label = dropdown_label("Region", character(0)), choices = with_placeholder(character(0)))
+    updateRadioButtons(session, "sdonor_subset_mode", selected = "manual")
     updateSelectInput(session, "sdonor_donors_manual", choices = donor_choices, selected = character(0))
+    updateSliderInput(session, "sdonor_random_n", value = donor_compare_min)
     updateCheckboxInput(session, "sdonor_show_overlay", value = FALSE)
     updateSliderInput(session, "sdonor_overlay_opacity", value = 0)
     updateCheckboxInput(session, "sdonor_sync_zoom", value = TRUE)
@@ -551,8 +628,8 @@ function(input, output, session) {
     sregion_entries_rv(list())
     updateCheckboxInput(session, "sregion_filter_donors", value = FALSE)
     updateSelectInput(session, "sregion_donor", selected = "")
-    updateSelectInput(session, "sregion_stain", choices = with_placeholder(character(0)))
-    updateSelectInput(session, "sregion_regions", choices = character(0), selected = character(0))
+    updateSelectInput(session, "sregion_stain", label = dropdown_label("Stain", character(0)), choices = with_placeholder(character(0)))
+    updateSelectInput(session, "sregion_regions", label = dropdown_label("Regions to compare", character(0)), choices = character(0), selected = character(0))
     updateCheckboxInput(session, "sregion_show_overlay", value = FALSE)
     updateSliderInput(session, "sregion_overlay_opacity", value = 0)
     updateCheckboxInput(session, "sregion_sync_zoom", value = FALSE)

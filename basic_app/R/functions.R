@@ -266,9 +266,7 @@ safe_id <- function(donor, stain, region = NULL) {
 # turns a slug like "middle-temporal-gyrus-and-superior-temporal-gyrus" into
 # "Middle Temporal Gyrus And Superior Temporal Gyrus" for display.
 prettify_region <- function(region) {
-  if (is.null(region) || is.na(region) || !nzchar(region)) return(region)
-  words <- strsplit(gsub("-", " ", region), " ")[[1]]
-  paste(toupper(substring(words, 1, 1)), substring(words, 2), sep = "", collapse = " ")
+  region
 }
 
 # prepends a blank "placeholder" choice so a single-select dropdown starts
@@ -276,6 +274,39 @@ prettify_region <- function(region) {
 with_placeholder <- function(choices, label = "Select...") {
   if (length(choices) == 0) return(setNames("", label))
   c(setNames("", label), setNames(choices, choices))
+}
+
+# appends a "(n)" count of unique options to a dropdown's base label, per
+# request — n is the count of REAL selectable choices, not counting the
+# "Select..." placeholder with_placeholder() adds on top.
+dropdown_label <- function(base_label, choices) {
+  shiny::tagList(
+    shiny::span(class = "filter-name-regular", base_label),
+    shiny::span(class = "filter-count-light", sprintf(" (%d)", length(choices)))
+  )
+}
+
+# lowercases text except for tokens that are ALREADY fully uppercase in
+# the original (any uppercase letters, zero lowercase ones — regardless
+# of digits/punctuation, so alphanumeric codes like "6E10" and "IBA1"
+# are preserved the same as pure-letter acronyms like "DLPFC"/"APOE").
+# Deliberately NOT used on donor IDs anywhere — those don't reliably
+# "look like" acronyms (e.g. "H21.33.040" is mostly digits with one
+# leading letter), so donor names are simply left out of every call site
+# instead of relying on this heuristic to detect them.
+smart_lowercase <- function(text) {
+  if (is.null(text) || length(text) == 0) return(text)
+  vapply(text, function(one) {
+    if (is.na(one)) return(one)
+    words <- strsplit(one, " ", fixed = TRUE)[[1]]
+    words <- vapply(words, function(w) {
+      letters_only <- gsub("[^A-Za-z]", "", w)
+      has_upper <- grepl("[A-Z]", letters_only)
+      has_lower <- grepl("[a-z]", letters_only)
+      if (has_upper && !has_lower) w else tolower(w)
+    }, character(1))
+    paste(words, collapse = " ")
+  }, character(1), USE.NAMES = FALSE)
 }
 
 # ---------------------------------------------------------------------------
@@ -853,7 +884,7 @@ build_identify_donor_field_widget <- function(f) {
     )
   } else {
     shiny::tagList(
-      shiny::checkboxGroupInput(paste0("iddonors_", f$id, "_sel"), f$label, choices = f$choices, selected = character(0)),
+      shiny::checkboxGroupInput(paste0("iddonors_", f$id, "_sel"), f$label, choices = stats::setNames(f$choices, smart_lowercase(f$choices)), selected = character(0)),
       shiny::plotOutput(paste0("iddonors_hist_", f$id), height = "170px"),
       shiny::tags$hr()
     )
@@ -1107,7 +1138,7 @@ sync_zoom_control <- function(id, default_checked) {
   shiny::tagList(
     shiny::tags$div(
       style = "display:flex; align-items:center; gap:6px;",
-      bslib::tooltip(shiny::icon("circle-info"), tt_sync_zoom, placement = "right"),
+      bslib::tooltip(shiny::tags$span(style = "color:#000;", bsicons::bs_icon("info-circle-fill")), tt_sync_zoom, placement = "right"),
       do.call(shiny::tags$input, checkbox_attrs),
       shiny::tags$label(`for` = id, style = "margin:0; cursor:pointer; font-weight:bold;", "Sync zoom/pan across images")
     ),
@@ -1247,7 +1278,7 @@ render_identify_donors_table <- function(donor_ids) {
               style = sprintf("cursor:pointer; color:%s;", metadata_chart_color),
               title = tt_copy_donor_id,
               onclick = sprintf("copyTextRobust('%s', this)", donor_id),
-              shiny::icon("copy")
+              bsicons::bs_icon("copy")
             )
           )
         )
@@ -1402,7 +1433,7 @@ build_metadata_accordion <- function(prefix, data) {
       shiny::tagList(
         shiny::checkboxGroupInput(
           paste0(prefix, "_meta_", f$id, "_sel"), label = NULL,
-          choices = f$choices, selected = character(0)
+          choices = stats::setNames(f$choices, smart_lowercase(f$choices)), selected = character(0)
         ),
         shiny::plotOutput(paste0(prefix, "_hist_", f$id), height = "170px")
       )
@@ -1453,7 +1484,7 @@ register_metadata_histograms <- function(output, prefix, data) {
         )
         graphics::text(x = bp, y = counts, labels = counts, pos = 3, cex = 1.1, xpd = TRUE)
         graphics::text(
-          x = bp, y = graphics::par("usr")[3], labels = names(counts),
+          x = bp, y = graphics::par("usr")[3], labels = smart_lowercase(names(counts)),
           srt = 0, adj = c(0.5, 1.3), xpd = TRUE, cex = 1.1
         )
       })
@@ -1467,26 +1498,65 @@ register_metadata_histograms <- function(output, prefix, data) {
 # other two are fixed and shown once in a constraint card instead.
 # ---------------------------------------------------------------------------
 
-render_viewer_grid_ui <- function(entries, label_field = c("stain", "donor", "region"), show_donor_info = FALSE) {
+# the clickable donor-info trigger — an icon that, when clicked, opens a
+# modal with that donor's metadata + QNP crosswalk (see the single shared
+# observeEvent(input$donor_info_click, ...) in server.r). Shared so every
+# page that shows one (Home, Compare Stains, Compare Donors, Compare
+# Regions) uses the exact same icon and popup content.
+#
+# Deliberately NOT bslib::popover()/tooltip() here — those have a confirmed
+# upstream limitation (rstudio/bslib#1019) where a trigger stops being
+# interactive once its surrounding content was inserted dynamically (e.g.
+# via renderUI()) rather than present at initial page load. Every context
+# card and viewer grid in this app IS renderUI content, so the icon looked
+# present but did nothing. A plain onclick + Shiny.setInputValue + modal
+# sidesteps that entirely — it only depends on Shiny's own input binding,
+# which does correctly rescan the DOM after every render.
+#
+# region/stain may be NULL (e.g. Compare Regions' context card, where
+# region VARIES per image and there's no one region to show QNP for) —
+# render_donor_metadata_list() already treats a NULL image_region/
+# image_stain as "omit the QNP section", so passing NULL here is exactly
+# how that section gets skipped for that page.
+donor_info_trigger <- function(donor_id, region = NULL, stain = NULL, mode = "combined", icon = "person-vcard") {
+  shiny::tags$span(
+    bsicons::bs_icon(icon),
+    style = "color:#000; cursor:pointer; margin-left:6px;",
+    title = paste("Donor", donor_id),
+    onclick = sprintf(
+      "Shiny.setInputValue('donor_info_click', {donor: '%s', region: '%s', stain: '%s', mode: '%s'}, {priority: 'event'})",
+      donor_id, region %||% "", stain %||% "", mode
+    )
+  )
+}
+
+render_viewer_grid_ui <- function(entries, label_field = c("stain", "donor", "region"), donor_info_style = c("none", "demo_only", "qnp_only", "split", "combined"), qnp_icon = "file-earmark-bar-graph") {
   label_field <- match.arg(label_field)
+  donor_info_style <- match.arg(donor_info_style)
   if (length(entries) == 0) return(NULL)  # blank until something is actually loaded
   col_width <- if (length(entries) == 1) 12 else 6
   shiny::tagList(shiny::fluidRow(lapply(entries, function(e) {
     cid   <- paste0("osd-", safe_id(e$donor, e$stain, e$region))
     label <- if (label_field == "region") prettify_region(e$region) else e[[label_field]]
     
-    heading <- if (show_donor_info && label_field == "donor") {
+    triggers <- switch(donor_info_style,
+                       "none"      = NULL,
+                       "demo_only" = donor_info_trigger(e$donor, mode = "demo", icon = "person-vcard"),
+                       "qnp_only"  = donor_info_trigger(e$donor, e$region, e$stain, mode = "qnp", icon = qnp_icon),
+                       "combined"  = donor_info_trigger(e$donor, e$region, e$stain, mode = "combined", icon = "person-vcard"),
+                       "split"     = shiny::tagList(
+                         donor_info_trigger(e$donor, mode = "demo", icon = "person-vcard"),
+                         donor_info_trigger(e$donor, e$region, e$stain, mode = "qnp", icon = qnp_icon)
+                       )
+    )
+    heading <- if (is.null(triggers)) {
+      shiny::h5(label)
+    } else {
       shiny::tags$div(
         style = "display:flex; align-items:center; gap:6px;",
         shiny::h5(style = "margin:0;", label),
-        bslib::popover(
-          shiny::tags$span(shiny::icon("circle-info"), style = "color:#888; cursor:pointer;"),
-          title = paste("Donor", label),
-          render_donor_metadata_list(e$donor, image_region = e$region, image_stain = e$stain)
-        )
+        triggers
       )
-    } else {
-      shiny::h5(label)
     }
     
     shiny::column(
@@ -1527,7 +1597,7 @@ render_annotation_master_ui <- function(entries, id_prefix = "ann", varying_fiel
         style = "margin:0;",
         onclick = sprintf("toggleAnnotationLabel('%s', this.checked)", lab)
       ),
-      shiny::tags$label(class = "form-check-label", `for` = cb_id, style = "margin:0;", lab),
+      shiny::tags$label(class = "form-check-label", `for` = cb_id, style = "margin:0;", smart_lowercase(lab)),
       shiny::tags$span(style = sprintf(
         "display:inline-block; width:18px; height:18px; border-radius:3px; background:%s; flex-shrink:0;",
         color_map[[lab]]
@@ -1559,15 +1629,30 @@ render_annotation_master_ui <- function(entries, id_prefix = "ann", varying_fiel
     return(shiny::tagList(shiny::h5(hdg_annotations), checkbox_group(all_labels)))
   }
   
-  # group the SPECIFIC labels by the actual value that has them (a real
-  # stain/donor/region name — not a generic "<dimension>-specific" bucket).
-  value_labels <- list()
+  # group the SPECIFIC labels by WHICH SET OF ENTRIES actually has each one
+  # — not by entry. Labels owned by the exact same set of entries collapse
+  # into ONE heading (the entries' names, comma-joined) instead of each
+  # entry getting its own separate, possibly-duplicate heading: if X, Y and
+  # Z all have layers 1-4 but only Z also has layer 5, that's a heading
+  # "X, Y, Z" for 1-4 and a separate heading "Z" for just 5 — not three
+  # near-identical "X" / "Y" / "Z" sections repeating 1-4 each time.
+  label_owners <- list()
   for (e in entries) {
     own_labels <- if (length(e$slot$annotation_files) > 0) vapply(e$slot$annotation_files, function(f) f$name, character(1)) else character(0)
     own_specific <- intersect(own_labels, specific_labels)
     if (length(own_specific) == 0) next
     value_name <- if (identical(varying_field, "region")) prettify_region(e$region) else e[[varying_field]]
-    value_labels[[value_name]] <- union(value_labels[[value_name]] %||% character(0), own_specific)
+    for (lab in own_specific) {
+      label_owners[[lab]] <- union(label_owners[[lab]] %||% character(0), value_name)
+    }
+  }
+  
+  owner_key <- function(owners) paste(sort(owners), collapse = "\u0001")
+  groups <- list()  # owner-set key -> list(owners = c(...), labels = c(...))
+  for (lab in names(label_owners)) {
+    key <- owner_key(label_owners[[lab]])
+    if (is.null(groups[[key]])) groups[[key]] <- list(owners = label_owners[[lab]], labels = character(0))
+    groups[[key]]$labels <- c(groups[[key]]$labels, lab)
   }
   
   shiny::tagList(
@@ -1575,8 +1660,11 @@ render_annotation_master_ui <- function(entries, id_prefix = "ann", varying_fiel
     # "If there are no shared annotations, do not show that heading" — so
     # this section is skipped entirely rather than showing an empty one.
     if (length(shared_labels) > 0) shiny::tagList(shiny::h6(hdg_shared), checkbox_group(shared_labels)),
-    shiny::tagList(lapply(names(value_labels), function(value_name) {
-      shiny::tagList(shiny::h6(value_name, style = "margin-top:14px;"), checkbox_group(value_labels[[value_name]]))
+    shiny::tagList(lapply(groups, function(g) {
+      shiny::tagList(
+        shiny::h6(paste(sort(g$owners), collapse = ", "), style = "margin-top:14px;"),
+        checkbox_group(g$labels)
+      )
     }))
   )
 }
@@ -1634,51 +1722,87 @@ build_images_payload <- function(entries, overlay_opacity, show_overlay = TRUE, 
 }
 
 # compact list of ALL metadata_fields for one donor — used inside the info
-# popover next to each donor heading on the Compare Donors page. unlike
-# render_donor_metadata_card(), this has no heading/grouping of its own,
-# since the popover title already provides that context.
+# popover next to each donor heading (Compare Stains/Donors) and in the
+# context card (Home/Compare Stains/Compare Regions).
+render_donor_demo_clinical <- function(donor_id) {
+  row <- donor_metadata[donor_metadata$donor == donor_id, , drop = FALSE]
+  if (nrow(row) == 0) return(shiny::p("No metadata found for this donor."))
+  shiny::tagList(lapply(metadata_fields, function(f) {
+    shiny::tags$div(
+      style = "margin-bottom:4px; white-space:nowrap;",
+      shiny::tags$strong(class = "context-card-label", paste0(f$label, ": ")),
+      shiny::tags$span(class = "context-card-value", smart_lowercase(as.character(row[[f$id]])))
+    )
+  }))
+}
+
 render_donor_metadata_list <- function(donor_id, image_region = NULL, image_stain = NULL) {
   row <- donor_metadata[donor_metadata$donor == donor_id, , drop = FALSE]
   if (nrow(row) == 0) return(shiny::p("No metadata found for this donor."))
-  
-  meta_block <- shiny::tagList(lapply(metadata_fields, function(f) {
-    shiny::tags$div(
-      style = "margin-bottom:4px; white-space:nowrap;",
-      shiny::tags$strong(paste0(f$label, ": ")), as.character(row[[f$id]])
-    )
-  }))
-  
-  qnp_block <- render_donor_metadata_qnp_block(donor_id, image_region, image_stain)
-  shiny::tagList(meta_block, qnp_block)
+  shiny::tagList(
+    render_donor_demo_clinical(donor_id),
+    render_donor_metadata_qnp_block(donor_id, image_region, image_stain)
+  )
 }
 
 # QNP values for one donor, scoped to the image region+stain currently
 # being viewed on Compare Donors (crosswalked via qnp_region_crosswalk /
 # qnp_stain_crosswalk, global.r) — every measure (qnp_fields_all, not just
 # percent-type), across every layer/subregion in that region.
-render_donor_metadata_qnp_block <- function(donor_id, image_region, image_stain) {
-  if (is.null(image_region) || is.null(image_stain)) return(NULL)
+render_donor_metadata_qnp_block <- function(donor_id, image_region, image_stain = NULL, standalone = FALSE) {
+  # divider only makes sense when this block follows something else (the
+  # combined view, where it separates demo/clinical from QNP) — shown on
+  # its own (Compare Stains'/Compare Regions' QNP-only trigger), there's
+  # nothing above it to separate from.
+  leading_hr <- if (standalone) NULL else shiny::tags$hr()
   
-  qnp_region <- qnp_region_crosswalk[[image_region]]
-  stain_groups <- qnp_stain_crosswalk[[image_stain]]
-  if (is.null(qnp_region) || is.null(stain_groups)) {
+  # region unknown entirely (Compare Regions, where region varies and
+  # there's no single value to scope QNP to) — omit cleanly. This is an
+  # expected, intentional case, not an error, so no message either.
+  if (is.null(image_region)) return(NULL)
+  
+  qnp_regions <- qnp_region_crosswalk[[image_region]]
+  if (is.null(qnp_regions)) {
     return(shiny::tagList(
-      shiny::tags$hr(),
+      leading_hr,
       shiny::strong(hdg_qnp),
       shiny::p(style = "font-size:0.85em; color:#888;",
-               "No QNP crosswalk entry for this region/stain — see qnp_region_crosswalk/qnp_stain_crosswalk in global.R.")
+               "No QNP crosswalk entry for this region — see qnp_region_crosswalk in global.R.")
     ))
   }
   
-  rows <- qnp_metadata[qnp_metadata$donor == donor_id & qnp_metadata$region == qnp_region, , drop = FALSE]
-  fields <- Filter(function(f) f$stain_group %in% stain_groups, qnp_fields_all)
-  
-  if (nrow(rows) == 0 || length(fields) == 0) {
-    return(shiny::tagList(shiny::tags$hr(), shiny::strong(hdg_qnp), shiny::p("No QNP data on record for this donor/region/stain.")))
+  # stain unknown (Compare Stains, where stain varies) — show every stain
+  # group's fields for this region rather than filtering to one arbitrary
+  # stain; a genuinely-given-but-unmapped stain still surfaces as a real
+  # crosswalk gap.
+  fields <- if (is.null(image_stain)) {
+    qnp_fields_all
+  } else {
+    stain_groups <- qnp_stain_crosswalk[[image_stain]]
+    if (is.null(stain_groups)) {
+      return(shiny::tagList(
+        leading_hr,
+        shiny::strong(hdg_qnp),
+        shiny::p(style = "font-size:0.85em; color:#888;",
+                 "No QNP crosswalk entry for this stain — see qnp_stain_crosswalk in global.R.")
+      ))
+    }
+    Filter(function(f) f$stain_group %in% stain_groups, qnp_fields_all)
   }
   
+  rows <- qnp_metadata[qnp_metadata$donor == donor_id & qnp_metadata$region %in% qnp_regions, , drop = FALSE]
+  
+  if (nrow(rows) == 0 || length(fields) == 0) {
+    return(shiny::tagList(leading_hr, shiny::strong(hdg_qnp), shiny::p("No QNP data on record for this donor/region.")))
+  }
+  
+  # only label each row with its specific QNP region code when more than
+  # one was pooled together (e.g. MEC-HIP covering both MEC and HIP) —
+  # with just one, the region is already implied and needn't be repeated.
+  show_region_label <- length(qnp_regions) > 1
+  
   shiny::tagList(
-    shiny::tags$hr(),
+    leading_hr,
     shiny::strong(hdg_qnp),
     shiny::tagList(lapply(seq_len(nrow(rows)), function(i) {
       r <- rows[i, , drop = FALSE]
@@ -1688,45 +1812,12 @@ render_donor_metadata_qnp_block <- function(donor_id, image_region, image_stain)
         shiny::tags$div(shiny::tags$strong(paste0(f$label, ": ")), signif(v, 4))
       }))
       if (length(vals) == 0) return(NULL)
+      subregion_label <- if (show_region_label) paste0(r$region, " - ", r$subregion) else r$subregion
       shiny::tags$div(
         style = sprintf("margin:6px 0; padding:6px; background:%s; border-radius:4px;", accent_bg_color),
-        shiny::tags$div(style = "margin-bottom:2px; font-weight:600;", r$subregion),
+        shiny::tags$div(style = "margin-bottom:2px; font-weight:600;", subregion_label),
         vals
       )
     }))
-  )
-}
-
-# shows one donor's metadata as separate cards, grouped per
-# metadata_display_groups (global.r) — edit that list to add/remove fields
-# or reorder/regroup them; this function just renders whatever it's given.
-render_donor_metadata_card <- function(donor_id) {
-  row <- donor_metadata[donor_metadata$donor == donor_id, , drop = FALSE]
-  if (nrow(row) == 0) return(NULL)
-  
-  field_by_id <- stats::setNames(metadata_fields, vapply(metadata_fields, function(f) f$id, character(1)))
-  
-  cards <- lapply(names(metadata_display_groups), function(group_name) {
-    field_ids <- metadata_display_groups[[group_name]]
-    bslib::card(
-      style = "min-width:220px;",
-      bslib::card_header(group_name),
-      bslib::card_body(
-        shiny::tagList(lapply(field_ids, function(fid) {
-          f <- field_by_id[[fid]]
-          if (is.null(f)) return(NULL)
-          shiny::tags$div(
-            style = "margin-bottom:6px;",
-            shiny::tags$strong(paste0(f$label, ": ")), as.character(row[[fid]])
-          )
-        }))
-      )
-    )
-  })
-  
-  shiny::tagList(
-    shiny::tags$hr(),
-    shiny::strong("Donor metadata:"),
-    shiny::div(style = "display:flex; flex-wrap:wrap; gap:16px; margin-top:8px;", cards)
   )
 }
