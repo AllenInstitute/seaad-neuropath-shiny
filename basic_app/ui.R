@@ -31,10 +31,11 @@ tagList(
       }
 
       /* accordion labels, filter names (the base label part of a
-         dropdown's 'Name (n)'), and context card labels all use the
-         Regular weight — more specific than the .navbar/headers rule
-         below, so .accordion-button here correctly overrides that one */
-      .accordion-button, .filter-name-regular, .context-card-label {
+         dropdown's 'Name (n)'), context card labels, and any plain text
+         opted into the Regular weight (.text-regular) — more specific
+         than the .navbar/headers rule below, so .accordion-button here
+         correctly overrides that one */
+      .accordion-button, .filter-name-regular, .context-card-label, .text-regular {
         font-family: 'AllenTextRegular', sans-serif !important;
       }
       /* the n count suffix on a dropdown label, and context card
@@ -62,7 +63,7 @@ tagList(
       /* #5 navbar background white, page names in the brand color */
       .navbar { background-color: #fff !important; }
       .navbar .nav-link {
-        color: #6464FF !important;
+        color: %s !important;
         font-size: 0.85rem;
         font-weight: normal !important;   /* #1 unbold */
         text-transform: lowercase !important;   /* #8 */
@@ -153,7 +154,7 @@ tagList(
         --bs-table-bg: #fff;
         --bs-table-striped-bg: %s;
       }
-    ", sidebar_divider_color, sidebar_bg_color, sidebar_divider_color, sidebar_divider_color, table_stripe_color)))
+    ", metadata_chart_color, sidebar_divider_color, sidebar_bg_color, sidebar_divider_color, sidebar_divider_color, table_stripe_color)))
   ),
   
   # always-visible scroll-to-top arrow. Sits outside navbarPage entirely
@@ -171,18 +172,9 @@ tagList(
   tags$div(
     id = "top_bar_links",
     style = "display:flex; align-items:center; gap:24px; margin-left:auto; margin-right:220px;",
-    tags$a(
-      href = "https://sea-ad.org", target = "_blank", style = "color:#000; text-decoration:none; display:flex; align-items:center; gap:4px; font-size:0.9rem;",
-      "sea-ad.org", bsicons::bs_icon("arrow-up-right")
-    ),
-    tags$a(
-      href = "https://brain-map.org", target = "_blank", style = "color:#000; text-decoration:none; display:flex; align-items:center; gap:4px; font-size:0.9rem;",
-      "brain-map.org", bsicons::bs_icon("arrow-up-right")
-    ),
-    tags$a(
-      href = "https://github.com/AllenInstitute/seaad-neuropath-shiny", target = "_blank", style = "color:#000; text-decoration:none; display:flex; align-items:center; gap:4px; font-size:0.9rem;",
-      "github", bsicons::bs_icon("arrow-up-right")
-    )
+    top_bar_link("https://sea-ad.org", "sea-ad.org"),
+    top_bar_link("https://brain-map.org", "brain-map.org"),
+    top_bar_link("https://github.com/AllenInstitute/seaad-neuropath-shiny", "github")
   ),
   tags$script(HTML("
     $(document).ready(function() {
@@ -298,12 +290,10 @@ tagList(
   navbarPage(
     title = tags$div(
       style = "display:flex; align-items:center; gap:8px;",
-      # placeholder logo — no real logo asset exists yet; swap this icon
-      # for an actual image (e.g. tags$img(src=...)) when one is available.
       tags$img(src = "AI_lens_black.png", style = "height:1.3em;"),
       tags$span(style = sprintf("color:%s;", brand_primary_color), lbl_brand_primary),
-      tags$span(style = "color:#000;", " / "),
-      tags$span(style = "color:#000;", lbl_brand_secondary)
+      tags$span(style = sprintf("color:%s;", icon_color), " / "),
+      tags$span(style = sprintf("color:%s;", icon_color), lbl_brand_secondary)
     ),
     windowTitle = lbl_app_title,
     theme = app_theme,
@@ -334,7 +324,7 @@ tagList(
                    sliderInput("home_overlay_opacity", "Overlay opacity", min = 0, max = 1, value = 0, step = 0.05)
                  ),
                  actionButton("home_load_btn", "Load", class = "btn-primary"),
-                 actionButton("home_reset_btn", "Reset", style = "margin-left:8px; background-color:#000; border-color:#000; color:#fff;")
+                 actionButton("home_reset_btn", "Reset", style = sprintf("margin-left:8px; background-color:%s; border-color:%s; color:#fff;", reset_button_color, reset_button_color))
                ),
                mainPanel(
                  width = 8,
@@ -374,7 +364,7 @@ tagList(
                               sliderInput("dstain_overlay_opacity", "Overlay opacity", min = 0, max = 1, value = 0, step = 0.05)
                             ),
                             actionButton("dstain_load_btn", "Load / Compare", class = "btn-primary"),
-                            actionButton("dstain_reset_btn", "Reset", style = "margin-left:8px; background-color:#000; border-color:#000; color:#fff;")
+                            actionButton("dstain_reset_btn", "Reset", style = sprintf("margin-left:8px; background-color:%s; border-color:%s; color:#fff;", reset_button_color, reset_button_color))
                           ),
                           mainPanel(
                             width = 8,
@@ -443,7 +433,7 @@ tagList(
                               sliderInput("sdonor_overlay_opacity", "Overlay opacity", min = 0, max = 1, value = 0, step = 0.05)
                             ),
                             actionButton("sdonor_load_btn", "Load / Compare", class = "btn-primary"),
-                            actionButton("sdonor_reset_btn", "Reset", style = "margin-left:8px; background-color:#000; border-color:#000; color:#fff;")
+                            actionButton("sdonor_reset_btn", "Reset", style = sprintf("margin-left:8px; background-color:%s; border-color:%s; color:#fff;", reset_button_color, reset_button_color))
                           ),
                           mainPanel(
                             width = 8,
@@ -484,7 +474,7 @@ tagList(
                               sliderInput("sregion_overlay_opacity", "Overlay opacity", min = 0, max = 1, value = 0, step = 0.05)
                             ),
                             actionButton("sregion_load_btn", "Load / Compare", class = "btn-primary"),
-                            actionButton("sregion_reset_btn", "Reset", style = "margin-left:8px; background-color:#000; border-color:#000; color:#fff;")
+                            actionButton("sregion_reset_btn", "Reset", style = sprintf("margin-left:8px; background-color:%s; border-color:%s; color:#fff;", reset_button_color, reset_button_color))
                           ),
                           mainPanel(
                             width = 8,
@@ -512,7 +502,7 @@ tagList(
                         sidebarLayout(
                           sidebarPanel(
                             width = 4,
-                            actionButton("iddonors_reset_btn", "Reset filters", style = "margin-bottom:12px; background-color:#000; border-color:#000; color:#fff;"),
+                            actionButton("iddonors_reset_btn", "Reset filters", style = sprintf("margin-bottom:12px; background-color:%s; border-color:%s; color:#fff;", reset_button_color, reset_button_color)),
                             uiOutput("identify_donors_metadata_accordion_ui"),
                             uiOutput("identify_donors_qnp_accordion_ui")
                           ),

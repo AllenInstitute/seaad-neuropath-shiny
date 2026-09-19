@@ -263,8 +263,9 @@ safe_id <- function(donor, stain, region = NULL) {
   gsub("[^A-Za-z0-9]+", "_", paste(parts, collapse = "_"))
 }
 
-# turns a slug like "middle-temporal-gyrus-and-superior-temporal-gyrus" into
-# "Middle Temporal Gyrus And Superior Temporal Gyrus" for display.
+# no-op passthrough — manifest region values are already human-readable
+# (e.g. "Dorsolateral Prefrontal Cortex (DLPFC)"), kept as a named hook in
+# case that ever changes.
 prettify_region <- function(region) {
   region
 }
@@ -422,21 +423,12 @@ parse_halo_annotations_cached <- function(url, ref_width) {
   result
 }
 
-# fetches+parses many annotation files CONCURRENTLY (all requests in flight
-# at once via curl's multi-handle interface, capped at `max_concurrent`),
-# instead of one at a time — since the actual bottleneck here is network
-# latency per file, not parsing, this is the main lever for making a large
-# comparison load faster. results are written straight into
-# .annotation_cache as each one finishes, so parse_halo_annotations_cached()
-# calls made afterward are all instant cache hits.
-#
-# `progress_callback(done, total)`, if given, is called after EVERY file
-# completes (success or failure) — not just once at the end — so callers
-# can show live, incrementing progress instead of an indefinite spinner
-# that gives no sense of whether anything is actually happening.
-#
-# `file_specs` is a list of list(url=, ref_width=) — duplicates (same url +
-# ref_width appearing across multiple entries) are only fetched once.
+# fetches+parses annotation files CONCURRENTLY (curl multi-handle, capped
+# at max_concurrent) instead of one at a time, since latency per file (not
+# parsing) is the bottleneck. Results land in .annotation_cache as each
+# finishes, so later parse_halo_annotations_cached() calls are cache hits.
+# progress_callback(done, total), if given, fires after every file.
+# file_specs is list(url=, ref_width=); duplicates are fetched only once.
 fetch_annotations_concurrently <- function(file_specs, progress_callback = NULL, max_concurrent = 10) {
   keyed <- lapply(file_specs, function(s) {
     s$cache_key <- paste(s$url, s$ref_width, sep = "::")
@@ -486,14 +478,9 @@ fetch_annotations_concurrently <- function(file_specs, progress_callback = NULL,
   invisible(NULL)
 }
 
-# ---------------------------------------------------------------------------
-# donor metadata — fully spec-driven by metadata_fields (defined in
-# global.r). Each field declares its own `csv_column` (the exact header text
-# in the specimen CSV); load_specimen_metadata_csv() only ever reads those
-# declared columns, so any OTHER column present in the file is silently
-# ignored. Adding a metadata field is entirely a global.r edit — no changes
-# needed here.
-# ---------------------------------------------------------------------------
+# donor metadata — fully spec-driven by metadata_fields (global.r). Each
+# field declares its own csv_column; load_specimen_metadata_csv() only
+# reads those declared columns, so any other column is silently ignored.
 
 # excel silently reinterprets genotype strings like "3/3" as dates ("3-mar").
 # since a us locale reads "m/d" as month/day, the original fraction is
@@ -547,13 +534,10 @@ load_specimen_metadata_csv <- function(path, donor_id_column = "Donor ID") {
   out
 }
 
-# ---------------------------------------------------------------------------
-# QNP (quantitative neuropathology) — values keyed by donor + region +
-# subregion, loaded from a separate csv (see qnp_fields/qnp_metadata_csv_path
-# in global.r). Unlike load_specimen_metadata_csv(), a missing/unreadable
-# file here doesn't stop the app — it just means no QNP filters are
-# available yet, which is the expected state before that file exists.
-# ---------------------------------------------------------------------------
+# QNP — values keyed by donor + region + subregion, from a separate csv
+# (qnp_fields/qnp_metadata_csv_path, global.r). Unlike
+# load_specimen_metadata_csv(), a missing/unreadable file here doesn't
+# stop the app — it just means no QNP filters are available yet.
 
 empty_qnp_metadata <- function() {
   df <- data.frame(donor = character(0), region_grouping = character(0), region = character(0), subregion = character(0),
@@ -611,38 +595,19 @@ load_qnp_metadata_csv <- function(path) {
   out
 }
 
-# ---------------------------------------------------------------------------
-# "Filter Donors" page.
+# "Filter Donors" page — donor_metadata (one row per donor) and
+# qnp_metadata (one row per donor+region+subregion) share the donor key
+# but differ in cardinality. QNP browsing has two modes (region-then-
+# subregion, or stain-across-every-region) via a radio button; only
+# percent-type fields get sliders.
 #
-# Two files, one shared key: donor_metadata (one row per donor: demographic
-# + clinical) and qnp_metadata (one row per donor+region+subregion: QNP).
-# Both are "donor-associated metadata" — the only structural difference is
-# that a donor has exactly one demographic/clinical row but potentially
-# several QNP rows (one per region+subregion they were measured in).
-#
-# QNP browsing is split into two modes via a radio button:
-#   Region mode: pick a region, then a subregion (or "Global" = that
-#     donor's mean across the region's subregions, offered only when the
-#     region HAS more than one subregion) — then one card per stain.
-#   Stain mode: pick a stain — then one card per REGION, each showing that
-#     stain's fields at that region's Global (or single-subregion) value.
-#     No region selector: every region is shown at once as its own card.
-# Only percent-type fields get sliders (qnp_fields is filtered to just
-# those in global.r).
-#
-# WHETHER A SLIDER IS "ACTIVE" IS TRACKED, NOT INFERRED.
-# Earlier versions tried to detect "the user hasn't touched this yet" by
-# comparing the widget's reported value against the data's exact range.
-# That is fundamentally unreliable: histoslider's React component can snap
-# handles to histogram bin edges, so an untouched slider's reported value
-# is NOT guaranteed to equal the data range — which is what kept silently
-# excluding the one donor holding a field's extreme value (the persistent
-# "83 of 84 on page load" bug), no matter how the tolerance was tuned.
-# Instead, iddonors_filter_active() records each input's FIRST observed
-# value as its baseline and reports the filter as active only once the
-# current value differs from it. No tolerances, no assumptions about the
-# widget's internals.
-# ---------------------------------------------------------------------------
+# Whether a slider is "active" is TRACKED, not inferred from comparing its
+# value against the data range — histoslider can snap handles to bin
+# edges, so an untouched slider's value isn't guaranteed to equal the
+# range, which caused a real bug (silently excluding whichever donor held
+# a field's extreme value). iddonors_filter_active() instead records each
+# input's first observed value as its baseline and reports "active" only
+# once the current value differs from it.
 
 # creates the per-session store of slider baselines. Kept in a plain
 # environment (not reactiveValues) deliberately: it's memoization, and
@@ -842,7 +807,7 @@ donors_with_qnp_data_for_region <- function(region) {
 filter_donors_identify_qnp_region_mode <- function(input, store) {
   region <- input$iddonors_qnp_region_sel
   subregion_choice <- input$iddonors_qnp_subregion_sel
-  if (!is_selected(region) || !is_selected(subregion_choice)) return(donor_choices)
+  if (!is_selected(input$iddonors_qnp_grouping_sel) || !is_selected(region) || !is_selected(subregion_choice)) return(donor_choices)
   
   donors <- donor_choices
   for (f in qnp_fields) donors <- apply_qnp_slider_filter(donors, region, subregion_choice, f, input, store)
@@ -974,7 +939,7 @@ register_identify_donors_qnp <- function(output, input) {
       shiny::req(is_selected(input$iddonors_qnp_stain_sel))
       build_iddonors_qnp_stain_sliders(input$iddonors_qnp_stain_sel)
     } else {
-      shiny::req(is_selected(input$iddonors_qnp_region_sel), is_selected(input$iddonors_qnp_subregion_sel))
+      shiny::req(is_selected(input$iddonors_qnp_grouping_sel), is_selected(input$iddonors_qnp_region_sel), is_selected(input$iddonors_qnp_subregion_sel))
       build_iddonors_qnp_region_sliders(input$iddonors_qnp_region_sel, input$iddonors_qnp_subregion_sel)
     }
   })
@@ -1012,9 +977,12 @@ filter_donors_identify_page <- function(input, store) {
   intersect(donors, qnp_keep)
 }
 
-# resets every filter back to "no restriction". Also CLEARS the baseline
-# store, so the values pushed here become the new baselines rather than
-# reading as deliberate user filtering.
+# resets every filter back to "no restriction", including the QNP
+# region/stain choice itself — not just its sliders — so a prior Region
+# vs Stain mode and its region/subregion or stain pick never silently
+# survives a reset. Also CLEARS the baseline store, so freshly-built
+# sliders record new baselines rather than reading as deliberate
+# filtering.
 reset_identify_donors_filters <- function(input, session, store) {
   rm(list = ls(envir = store, all.names = TRUE), envir = store)
   
@@ -1031,32 +999,15 @@ reset_identify_donors_filters <- function(input, session, store) {
     }
   }
   
-  reset_one_qnp_field <- function(f, region, subregion_choice) {
-    vals_df <- identify_qnp_field_values(region, subregion_choice, f$id)
-    rng <- suppressWarnings(range(vals_df$value, na.rm = TRUE))
-    if (all(is.finite(rng))) {
-      histoslider::update_histoslider(
-        identify_donor_qnp_widget_id(region, subregion_choice, f$id),
-        start = rng[1], end = rng[2], session = session
-      )
-    }
-  }
-  
-  if (identical(input$iddonors_qnp_mode, "stain")) {
-    stain <- input$iddonors_qnp_stain_sel
-    if (is_selected(stain)) {
-      fields <- Filter(function(x) identical(x$stain_group, stain), qnp_fields)
-      for (region in names(qnp_by_region)) {
-        for (f in fields) reset_one_qnp_field(f, region, qnp_region_level_key(region))
-      }
-    }
-  } else {
-    region <- input$iddonors_qnp_region_sel
-    subregion_choice <- input$iddonors_qnp_subregion_sel
-    if (is_selected(region) && is_selected(subregion_choice)) {
-      for (f in qnp_fields) reset_one_qnp_field(f, region, subregion_choice)
-    }
-  }
+  # unselect the QNP browse-by choice itself (mode + every cascading
+  # selector), regardless of which is currently visible — a fresh
+  # selection afterward builds new sliders at the full data range
+  # automatically, so there's nothing left to reset sliders for here.
+  shiny::updateRadioButtons(session, "iddonors_qnp_mode", selected = "region")
+  shiny::updateSelectInput(session, "iddonors_qnp_grouping_sel", selected = "")
+  shiny::updateSelectInput(session, "iddonors_qnp_region_sel", selected = "")
+  shiny::updateSelectInput(session, "iddonors_qnp_subregion_sel", selected = "")
+  shiny::updateSelectInput(session, "iddonors_qnp_stain_sel", selected = "")
 }
 
 # every metadata column for the matching donors, ready for display or
@@ -1075,22 +1026,14 @@ identify_donors_table_data <- function(donor_ids, exclude_ids = character(0)) {
   df
 }
 
-# ---------------------------------------------------------------------------
-# QNP in WIDE form: one row per donor, one column per measure per region.
-# qnp_metadata is long (a row per donor+region+subregion), so this pivots
-# it out so each donor fits a single row alongside their demographic and
-# clinical columns.
-#
-# Column names are "<Region> | <measure>" where a region has a single
-# subregion, and "<Region> | <Subregion> | <measure>" where it has several
-# — dropping the subregion in the multi-subregion case would force an
-# average and silently lose data, so it's kept only where it's actually
-# needed to disambiguate.
-#
-# Uses qnp_fields_all (EVERY measure), not the percent-only qnp_fields the
-# on-page sliders use. DOWNLOAD/POPUP ONLY — never rendered into the
-# page's table.
-# ---------------------------------------------------------------------------
+# QNP in wide form: one row per donor, one column per measure per region
+# — pivoted from qnp_metadata's long form (a row per donor+region+
+# subregion) so each donor fits a single row alongside demographic/
+# clinical columns. Column names are "<Region> | <measure>", or
+# "<Region> | <Subregion> | <measure>" only where a region has more than
+# one subregion (averaging there would silently lose data). Uses
+# qnp_fields_all (every measure, not just the on-page percent-only
+# sliders) — download/popup only, never the page's own table.
 build_qnp_wide_columns <- function(donor_ids) {
   out <- data.frame(donor = sort(donor_ids), stringsAsFactors = FALSE)
   if (nrow(qnp_metadata) == 0 || length(donor_ids) == 0) return(out)
@@ -1138,11 +1081,21 @@ sync_zoom_control <- function(id, default_checked) {
   shiny::tagList(
     shiny::tags$div(
       style = "display:flex; align-items:center; gap:6px;",
-      bslib::tooltip(shiny::tags$span(style = "color:#000;", bsicons::bs_icon("info-circle-fill")), tt_sync_zoom, placement = "right"),
+      bslib::tooltip(shiny::tags$span(style = sprintf("color:%s;", icon_color), bsicons::bs_icon("info-circle-fill")), tt_sync_zoom, placement = "right"),
       do.call(shiny::tags$input, checkbox_attrs),
       shiny::tags$label(`for` = id, style = "margin:0; cursor:pointer; font-weight:bold;", "Sync zoom/pan across images")
     ),
     shiny::tags$div(style = "height:10px;")
+  )
+}
+
+# one external top-bar link (sea-ad.org/brain-map.org/github) — identical
+# styling apart from href and label.
+top_bar_link <- function(href, label) {
+  shiny::tags$a(
+    href = href, target = "_blank",
+    style = sprintf("color:%s; text-decoration:none; display:flex; align-items:center; gap:4px; font-size:0.9rem;", icon_color),
+    label, bsicons::bs_icon("arrow-up-right")
   )
 }
 
@@ -1168,11 +1121,11 @@ render_donor_all_metadata <- function(donor_id) {
       style = "margin-bottom:10px;",
       bslib::card_header(group_name, style = purple_card_header_style()),
       bslib::card_body(
+        gap = "0px",
         shiny::tagList(lapply(metadata_display_groups[[group_name]], function(fid) {
           f <- field_by_id[[fid]]
           if (is.null(f)) return(NULL)
           shiny::tags$div(
-            style = "margin-bottom:4px;",
             shiny::tags$strong(paste0(f$label, ": ")),
             shiny::tags$span(as.character(row[[fid]]))
           )
@@ -1220,10 +1173,11 @@ render_donor_qnp_region_detail <- function(donor_id, region, view_mode = "layers
   rows <- qnp_metadata[qnp_metadata$donor == donor_id & qnp_metadata$region == region, , drop = FALSE]
   if (nrow(rows) == 0) return(shiny::p("No QNP data on record for this donor in this region."))
   
-  # tight, explicit spacing for each value line — without this, the rows
-  # inherit whatever gap bslib::card_body() applies by default, which
-  # reads as too spaced out for a list this dense.
-  line_style <- "margin:0 0 2px 0; line-height:1.3;"
+  # tight spacing between value lines. NOTE: bslib::card_body() is a
+  # flex container with its own default gap between children — that gap
+  # overrides any margin set on the children themselves, so it (not
+  # line_style) is the actual lever for inter-line spacing here.
+  line_style <- "margin:0; line-height:1.15;"
   
   if (identical(view_mode, "global")) {
     vals <- Filter(Negate(is.null), lapply(qnp_fields, function(f) {
@@ -1232,7 +1186,7 @@ render_donor_qnp_region_detail <- function(donor_id, region, view_mode = "layers
       shiny::tags$div(style = line_style, shiny::tags$strong(paste0(qnp_field_display_label(f$label), ": ")), shiny::tags$span(signif(v, 4)))
     }))
     if (length(vals) == 0) return(shiny::p("No percent-field data for this donor/region."))
-    return(bslib::card(bslib::card_body(vals)))
+    return(bslib::card(bslib::card_body(vals, gap = "0px")))
   }
   
   cards <- lapply(seq_len(nrow(rows)), function(i) {
@@ -1246,7 +1200,7 @@ render_donor_qnp_region_detail <- function(donor_id, region, view_mode = "layers
     bslib::card(
       style = "margin-bottom:8px;",
       bslib::card_header(r$subregion),
-      bslib::card_body(vals)
+      bslib::card_body(vals, gap = "0px")
     )
   })
   shiny::tagList(Filter(Negate(is.null), cards))
@@ -1343,11 +1297,6 @@ histoslider_range <- function(val) {
 # reads the meta_* inputs for a given page prefix and filters donor_metadata
 # down with dplyr. returns the vector of matching donor ids.
 #
-# type "range"  -> a [min,max] filter on the raw numeric column.
-# type "select" -> an unordered %in% filter from the checkbox group.
-# reads the meta_* inputs for a given page prefix and filters donor_metadata
-# down with dplyr. returns the vector of matching donor ids.
-#
 # type "range"  -> a [min,max] filter from the histoslider's dragged range.
 # type "select" -> an unordered %in% filter from the checkbox group.
 filter_donors_by_metadata <- function(metadata, input, prefix) {
@@ -1368,34 +1317,18 @@ filter_donors_by_metadata <- function(metadata, input, prefix) {
   df$donor
 }
 
-# wraps input_histoslider() with the shared metadata_chart_color (global.r).
-# NOTE: histoslider's documented API doesn't expose a color option — the
-# `options` argument here is unverified against the package's actual JS
-# component and may not visibly change anything. If the bar color still
-# doesn't match, the CSS override in ui.R's <style> block is the more
-# reliable lever (target whatever class the rendered bars actually use —
-# inspect one with your browser's dev tools to confirm the selector).
-# confirmed against the actual react component source (samhogg/histoslider
-# Histoslider.js) and the R wrapper's docs (input_histoslider.Rd, which
-# explicitly documents `options` as a pass-through to that component's
-# props): the real color props are `selectedColor`/`unselectedColor`, not
-# `color` (an earlier guess that silently did nothing). selectedColor tints
-# the bars within the dragged range, unselectedColor tints the rest — using
-# our border/fill purples for a two-tone look consistent with the plain
-# categorical histograms elsewhere.
+# wraps input_histoslider() with the shared metadata_chart_color. Color
+# props confirmed against the react component source (samhogg/histoslider
+# Histoslider.js): selectedColor/unselectedColor, not color (an earlier
+# guess that silently did nothing) — selectedColor tints the dragged
+# range, unselectedColor the rest.
 build_histoslider <- function(id, values, breaks = NULL) {
-  # histoslider's own default for `breaks` is rlang::missing_arg() (an
-  # intentionally MISSING argument, not NULL) — passing a literal NULL
-  # instead makes its internal hist() call fail with "Invalid breakpoints
-  # ... NULL". so when no breaks were given, omit the argument entirely
-  # via do.call() rather than passing breaks = NULL.
-  #
-  # start/end are ALSO left out of the R wrapper's documented signature by
-  # default (both NULL) — meaning the widget infers its own initial
-  # selection rather than us ever telling it what "untouched" should look
-  # like. explicitly passing start/end = this field's own full data range
-  # removes that ambiguity: the widget's initial value is now exactly what
-  # we told it to be, not something it independently derived.
+  # breaks: histoslider's own default is rlang::missing_arg(), not NULL —
+  # passing NULL makes its internal hist() fail, so omit the argument
+  # entirely via do.call() when none is given.
+  # start/end: explicitly set to the field's real data range so the
+  # widget's initial selection is exactly what we tell it, not something
+  # it independently infers.
   clean_vals <- stats::na.omit(values)
   rng <- if (length(clean_vals) > 0) range(clean_vals) else c(0, 1)
   
@@ -1415,11 +1348,11 @@ build_histoslider <- function(id, values, breaks = NULL) {
 #               via register_metadata_histograms().
 # widget ids are prefixed per page.
 #
-# builds one accordion per page with two top-level panels, "Demographic"
-# and "Clinical" (from metadata_display_groups, global.r), each holding a
+# builds one accordion per page with two top-level panels, "demographic"
+# and "clinical" (from metadata_display_groups, global.r), each holding a
 # sub-accordion with one panel per field in that group. Used by the four
 # regular pages' "Filter donors by metadata" — QNP filtering lives entirely
-# on the separate Identify Donors page instead (build_identify_donors_accordion()).
+# on the separate Identify Donors page instead (build_identify_donors_metadata_accordion()).
 build_metadata_accordion <- function(prefix, data) {
   field_by_id <- stats::setNames(metadata_fields, vapply(metadata_fields, function(f) f$id, character(1)))
   
@@ -1498,39 +1431,39 @@ register_metadata_histograms <- function(output, prefix, data) {
 # other two are fixed and shown once in a constraint card instead.
 # ---------------------------------------------------------------------------
 
-# the clickable donor-info trigger — an icon that, when clicked, opens a
-# modal with that donor's metadata + QNP crosswalk (see the single shared
-# observeEvent(input$donor_info_click, ...) in server.r). Shared so every
-# page that shows one (Home, Compare Stains, Compare Donors, Compare
-# Regions) uses the exact same icon and popup content.
+# the clickable donor-info trigger — an icon that opens a modal with that
+# donor's metadata + QNP crosswalk (see the shared
+# observeEvent(input$donor_info_click, ...) in server.r). Shared across
+# every page that shows one.
 #
-# Deliberately NOT bslib::popover()/tooltip() here — those have a confirmed
+# Deliberately NOT bslib::popover()/tooltip() — those have a confirmed
 # upstream limitation (rstudio/bslib#1019) where a trigger stops being
-# interactive once its surrounding content was inserted dynamically (e.g.
-# via renderUI()) rather than present at initial page load. Every context
-# card and viewer grid in this app IS renderUI content, so the icon looked
-# present but did nothing. A plain onclick + Shiny.setInputValue + modal
-# sidesteps that entirely — it only depends on Shiny's own input binding,
-# which does correctly rescan the DOM after every render.
+# interactive once its surrounding content was inserted dynamically (every
+# context card/viewer grid here is renderUI content). A plain onclick +
+# Shiny.setInputValue + modal sidesteps it, since it only depends on
+# Shiny's own input binding, which does rescan the DOM after every render.
 #
-# region/stain may be NULL (e.g. Compare Regions' context card, where
-# region VARIES per image and there's no one region to show QNP for) —
-# render_donor_metadata_list() already treats a NULL image_region/
-# image_stain as "omit the QNP section", so passing NULL here is exactly
-# how that section gets skipped for that page.
-donor_info_trigger <- function(donor_id, region = NULL, stain = NULL, mode = "combined", icon = "person-vcard") {
+# region/stain may be NULL (e.g. Compare Regions, where region varies per
+# image) — render_donor_metadata_qnp_block() treats NULL as "omit the QNP
+# section", so passing NULL is how that section gets skipped.
+#
+# qnp_all_fields travels through as allFields: it tells the QNP block to
+# show every field regardless of this stain's own crosswalk group (used
+# by Compare Stains), while stain itself still reaches the popup so its
+# header can name which stain the card belongs to.
+donor_info_trigger <- function(donor_id, region = NULL, stain = NULL, mode = "combined", icon = "person-vcard", qnp_all_fields = FALSE) {
   shiny::tags$span(
     bsicons::bs_icon(icon),
-    style = "color:#000; cursor:pointer; margin-left:6px;",
+    style = sprintf("color:%s; cursor:pointer; margin-left:6px;", icon_color),
     title = paste("Donor", donor_id),
     onclick = sprintf(
-      "Shiny.setInputValue('donor_info_click', {donor: '%s', region: '%s', stain: '%s', mode: '%s'}, {priority: 'event'})",
-      donor_id, region %||% "", stain %||% "", mode
+      "Shiny.setInputValue('donor_info_click', {donor: '%s', region: '%s', stain: '%s', mode: '%s', allFields: %s}, {priority: 'event'})",
+      donor_id, region %||% "", stain %||% "", mode, if (isTRUE(qnp_all_fields)) "true" else "false"
     )
   )
 }
 
-render_viewer_grid_ui <- function(entries, label_field = c("stain", "donor", "region"), donor_info_style = c("none", "demo_only", "qnp_only", "split", "combined"), qnp_icon = "file-earmark-bar-graph") {
+render_viewer_grid_ui <- function(entries, label_field = c("stain", "donor", "region"), donor_info_style = c("none", "demo_only", "qnp_only", "split", "combined"), qnp_icon = "file-earmark-bar-graph", qnp_all_fields = FALSE) {
   label_field <- match.arg(label_field)
   donor_info_style <- match.arg(donor_info_style)
   if (length(entries) == 0) return(NULL)  # blank until something is actually loaded
@@ -1542,11 +1475,11 @@ render_viewer_grid_ui <- function(entries, label_field = c("stain", "donor", "re
     triggers <- switch(donor_info_style,
                        "none"      = NULL,
                        "demo_only" = donor_info_trigger(e$donor, mode = "demo", icon = "person-vcard"),
-                       "qnp_only"  = donor_info_trigger(e$donor, e$region, e$stain, mode = "qnp", icon = qnp_icon),
+                       "qnp_only"  = donor_info_trigger(e$donor, e$region, e$stain, mode = "qnp", icon = qnp_icon, qnp_all_fields = qnp_all_fields),
                        "combined"  = donor_info_trigger(e$donor, e$region, e$stain, mode = "combined", icon = "person-vcard"),
                        "split"     = shiny::tagList(
                          donor_info_trigger(e$donor, mode = "demo", icon = "person-vcard"),
-                         donor_info_trigger(e$donor, e$region, e$stain, mode = "qnp", icon = qnp_icon)
+                         donor_info_trigger(e$donor, e$region, e$stain, mode = "qnp", icon = qnp_icon, qnp_all_fields = qnp_all_fields)
                        )
     )
     heading <- if (is.null(triggers)) {
@@ -1670,26 +1603,19 @@ render_annotation_master_ui <- function(entries, id_prefix = "ann", varying_fiel
 }
 
 # builds the json-ready payload for the 'loadImages' custom message.
-# `show_overlay` (per-page checkbox) blanks overlayUrl entirely when off.
+# show_overlay (per-page checkbox) blanks overlayUrl entirely when off.
 #
-# EAGER annotation loading: every annotation file for every entry is parsed
-# right here (via the cache, so repeat loads of the same file are instant)
-# before the message is even sent — by the time an image appears, every one
-# of its layers' polygons is already sitting in the browser, so checking a
-# box just toggles visibility with no fetch delay. This trades a longer
-# wait at Load/Compare time for annotations that are always instantly ready
-# once the wait is over, which is the behavior actually being asked for
-# here — the cost is that a comparison spanning many donors/layers can take
-# a while up front, especially the first time each file is touched.
+# EAGER annotation loading: every entry's annotation files are parsed here
+# (via the cache) before the message is sent, so once an image appears,
+# checking a box just toggles visibility with no fetch delay. Trades a
+# longer wait at Load/Compare time for instant toggling afterward.
 build_images_payload <- function(entries, overlay_opacity, show_overlay = TRUE, progress_callback = NULL) {
   color_map <- build_annotation_color_map(get_unique_annotation_labels(entries))
   
-  # gather every annotation file across ALL entries and fetch them
-  # CONCURRENTLY in one batch (see fetch_annotations_concurrently()) before
-  # doing anything else — this is what actually speeds up a large
-  # comparison's load time, since it's dominated by network latency per
-  # file, not by parsing. everything below this point is then just reading
-  # from the now-warm cache.
+  # fetch every annotation file across all entries CONCURRENTLY in one
+  # batch first (see fetch_annotations_concurrently()) — network latency
+  # per file, not parsing, is what actually gates load time. Everything
+  # below reads from the now-warm cache.
   all_specs <- list()
   for (e in entries) {
     for (f in e$slot$annotation_files) {
@@ -1737,8 +1663,6 @@ render_donor_demo_clinical <- function(donor_id) {
 }
 
 render_donor_metadata_list <- function(donor_id, image_region = NULL, image_stain = NULL) {
-  row <- donor_metadata[donor_metadata$donor == donor_id, , drop = FALSE]
-  if (nrow(row) == 0) return(shiny::p("No metadata found for this donor."))
   shiny::tagList(
     render_donor_demo_clinical(donor_id),
     render_donor_metadata_qnp_block(donor_id, image_region, image_stain)
@@ -1749,7 +1673,7 @@ render_donor_metadata_list <- function(donor_id, image_region = NULL, image_stai
 # being viewed on Compare Donors (crosswalked via qnp_region_crosswalk /
 # qnp_stain_crosswalk, global.r) — every measure (qnp_fields_all, not just
 # percent-type), across every layer/subregion in that region.
-render_donor_metadata_qnp_block <- function(donor_id, image_region, image_stain = NULL, standalone = FALSE) {
+render_donor_metadata_qnp_block <- function(donor_id, image_region, image_stain = NULL, standalone = FALSE, all_fields = FALSE) {
   # divider only makes sense when this block follows something else (the
   # combined view, where it separates demo/clinical from QNP) — shown on
   # its own (Compare Stains'/Compare Regions' QNP-only trigger), there's
@@ -1761,28 +1685,38 @@ render_donor_metadata_qnp_block <- function(donor_id, image_region, image_stain 
   # expected, intentional case, not an error, so no message either.
   if (is.null(image_region)) return(NULL)
   
+  # header always names the region/stain combination this card is scoped
+  # to — reused across every return branch below, including the
+  # crosswalk-miss and no-data fallbacks, so it's always clear which
+  # image a popup was opened from.
+  header_detail <- if (!is.null(image_stain)) {
+    sprintf("%s / %s", smart_lowercase(prettify_region(image_region)), smart_lowercase(image_stain))
+  } else {
+    smart_lowercase(prettify_region(image_region))
+  }
+  header <- shiny::tagList(shiny::strong(hdg_qnp), sprintf(" — %s", header_detail))
+  
   qnp_regions <- qnp_region_crosswalk[[image_region]]
   if (is.null(qnp_regions)) {
     return(shiny::tagList(
       leading_hr,
-      shiny::strong(hdg_qnp),
+      header,
       shiny::p(style = "font-size:0.85em; color:#888;",
                "No QNP crosswalk entry for this region — see qnp_region_crosswalk in global.R.")
     ))
   }
   
-  # stain unknown (Compare Stains, where stain varies) — show every stain
-  # group's fields for this region rather than filtering to one arbitrary
-  # stain; a genuinely-given-but-unmapped stain still surfaces as a real
-  # crosswalk gap.
-  fields <- if (is.null(image_stain)) {
+  # all_fields (Compare Stains) shows every stain group's fields for this
+  # region rather than narrowing to one — a genuinely-given-but-unmapped
+  # stain still surfaces as a real crosswalk gap when all_fields is off.
+  fields <- if (all_fields || is.null(image_stain)) {
     qnp_fields_all
   } else {
     stain_groups <- qnp_stain_crosswalk[[image_stain]]
     if (is.null(stain_groups)) {
       return(shiny::tagList(
         leading_hr,
-        shiny::strong(hdg_qnp),
+        header,
         shiny::p(style = "font-size:0.85em; color:#888;",
                  "No QNP crosswalk entry for this stain — see qnp_stain_crosswalk in global.R.")
       ))
@@ -1793,7 +1727,7 @@ render_donor_metadata_qnp_block <- function(donor_id, image_region, image_stain 
   rows <- qnp_metadata[qnp_metadata$donor == donor_id & qnp_metadata$region %in% qnp_regions, , drop = FALSE]
   
   if (nrow(rows) == 0 || length(fields) == 0) {
-    return(shiny::tagList(leading_hr, shiny::strong(hdg_qnp), shiny::p("No QNP data on record for this donor/region.")))
+    return(shiny::tagList(leading_hr, header, shiny::p("No QNP data on record for this donor/region.")))
   }
   
   # only label each row with its specific QNP region code when more than
@@ -1803,7 +1737,7 @@ render_donor_metadata_qnp_block <- function(donor_id, image_region, image_stain 
   
   shiny::tagList(
     leading_hr,
-    shiny::strong(hdg_qnp),
+    header,
     shiny::tagList(lapply(seq_len(nrow(rows)), function(i) {
       r <- rows[i, , drop = FALSE]
       vals <- Filter(Negate(is.null), lapply(fields, function(f) {

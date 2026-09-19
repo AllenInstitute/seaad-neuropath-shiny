@@ -10,7 +10,6 @@
 # already available by the time ui.R and server.R need them — no explicit
 # source() call required.
 # =============================================================================
-library(faq)
 
 # Returns the About tabPanel. Called once from ui.R, inside navbarPage(...).
 about_tab_ui <- function() {
@@ -24,7 +23,7 @@ about_tab_ui <- function() {
              
              h4("Relevant Publications"),
              p("See: ", a("https://brain-map.org/consortia/sea-ad/our-science", href="https://brain-map.org/consortia/sea-ad/our-science", target = "_blank")),
-             p(strong("Quantitative neuropathology (QNP) values from:"), br(), 
+             p(tags$span(class = "text-regular", "Quantitative neuropathology (QNP) values from:"), br(), 
                "Multiregional single-cell profiling reveals shared andspecialized cellular vulnerability in Alzheimer’s disease", 
                a("(Travaglini,Gabitto, Ding, et al., bioRxiv, 2026)", href = "https://doi.org/10.64898/2026.07.01.734821", target = "_blank"), br(),
                "The Caudate Nucleus Exhibits Distinct Pathology and Cell Type-Specific Responses Across Alzheimer’s Disease",
@@ -45,10 +44,8 @@ about_tab_ui <- function() {
              tags$img(
                src = "AI_medium_maroon_black.svg",
                style = "max-height:100px; margin-bottom:16px; border-radius:6px;margin-left:20px;"
-             ),
-             # br(),
-             # h4("Frequently Asked Questions"),
-             # faq::faq(data = df, elementId = "faq", height = "50%",faqtitle = ""),
+             )
+             # FAQ section planned (library(faq)) — not yet built.
            )
   )
 }

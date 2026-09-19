@@ -52,6 +52,28 @@ function(input, output, session) {
     )
   }
   
+  # the "Reset image zoom" button, identical across all four pages apart
+  # from its id.
+  reset_zoom_btn_ui <- function(id) {
+    actionButton(id, lbl_reset_image_zoom,
+                 style = sprintf("background-color:%s; border-color:%s; color:#fff; font-size:16px;", action_button_color, action_button_color))
+  }
+  
+  # shared Load/Compare body: fetches annotations (with a live progress
+  # bar) and builds the images payload, then sends it to the browser.
+  # syncCheckboxId names the page's sync-zoom checkbox, checked LIVE by
+  # the JS on every pan/zoom event (not baked in at load time), so
+  # unchecking it after images are loaded takes effect immediately.
+  load_images_with_progress <- function(entries, overlay_opacity, show_overlay, sync_checkbox_id = NULL) {
+    images <- shiny::withProgress(message = "Loading images...", value = 0, {
+      build_images_payload(entries, overlay_opacity, show_overlay,
+                           progress_callback = function(done, total) {
+                             shiny::setProgress(value = done / total, detail = sprintf("Fetching annotations: %d of %d", done, total))
+                           })
+    })
+    session$onFlushed(function() session$sendCustomMessage("loadImages", list(images = images, syncCheckboxId = sync_checkbox_id)), once = TRUE)
+  }
+  
   # each page's "currently loaded" state lives in a reactiveVal (not a plain
   # eventReactive) so the nav-change observer at the bottom of this file can
   # explicitly clear it back to empty when the user switches tabs.
@@ -148,8 +170,7 @@ function(input, output, session) {
   
   output$home_reset_zoom_btn_ui <- renderUI({
     req(length(home_entries_rv()) > 0)
-    actionButton("home_reset_zoom_btn", lbl_reset_image_zoom,
-                 style = sprintf("background-color:%s; border-color:%s; color:#fff; font-size:16px;", action_button_color, action_button_color))
+    reset_zoom_btn_ui("home_reset_zoom_btn")
   })
   
   observeEvent(input$home_load_btn, {
@@ -160,18 +181,7 @@ function(input, output, session) {
     
     entries <- list(list(donor = input$home_donor, region = input$home_region, stain = input$home_stain, slot = slot))
     home_entries_rv(entries)
-    
-    # annotation files for this entry are fetched CONCURRENTLY inside
-    # build_images_payload() (see its comment), with live progress reported
-    # here via a determinate progress bar — so it's clear this is actually
-    # working and roughly how much is left, rather than an indefinite spinner.
-    images <- shiny::withProgress(message = "Loading image...", value = 0, {
-      build_images_payload(entries, input$home_overlay_opacity, input$home_show_overlay,
-                           progress_callback = function(done, total) {
-                             shiny::setProgress(value = done / total, detail = sprintf("Fetching annotations: %d of %d", done, total))
-                           })
-    })
-    session$onFlushed(function() session$sendCustomMessage("loadImages", list(images = images)), once = TRUE)
+    load_images_with_progress(entries, input$home_overlay_opacity, input$home_show_overlay)
   })
   
   # ===========================================================================
@@ -216,12 +226,11 @@ function(input, output, session) {
   
   output$dstain_reset_zoom_btn_ui <- renderUI({
     req(length(dstain_entries_rv()) > 0)
-    actionButton("dstain_reset_zoom_btn", lbl_reset_image_zoom,
-                 style = sprintf("background-color:%s; border-color:%s; color:#fff; font-size:16px;", action_button_color, action_button_color))
+    reset_zoom_btn_ui("dstain_reset_zoom_btn")
   })
   
   output$dstain_annotation_ui <- renderUI({ render_annotation_master_ui(dstain_entries_rv(), id_prefix = "dstain", varying_field = "stain") })
-  output$dstain_viewer_grid   <- renderUI({ render_viewer_grid_ui(dstain_entries_rv(), label_field = "stain", donor_info_style = "qnp_only", qnp_icon = "file-earmark-bar-graph") })
+  output$dstain_viewer_grid   <- renderUI({ render_viewer_grid_ui(dstain_entries_rv(), label_field = "stain", donor_info_style = "qnp_only", qnp_icon = "file-earmark-bar-graph", qnp_all_fields = TRUE) })
   
   observeEvent(input$dstain_load_btn, {
     req(input$dstain_donor, input$dstain_region, length(input$dstain_stains) > 0,
@@ -237,18 +246,7 @@ function(input, output, session) {
     
     entries <- sort_entries_by(entries, "stain")
     dstain_entries_rv(entries)
-    
-    images <- shiny::withProgress(message = "Loading images...", value = 0, {
-      build_images_payload(entries, input$dstain_overlay_opacity, input$dstain_show_overlay,
-                           progress_callback = function(done, total) {
-                             shiny::setProgress(value = done / total, detail = sprintf("Fetching annotations: %d of %d", done, total))
-                           })
-    })
-    # syncCheckboxId names the checkbox for the JS to check LIVE on every
-    # zoom/pan event, rather than a fixed value baked in at load time —
-    # that's what lets unchecking it after images are already loaded take
-    # effect immediately, with no reload needed.
-    session$onFlushed(function() session$sendCustomMessage("loadImages", list(images = images, syncCheckboxId = "dstain_sync_zoom")), once = TRUE)
+    load_images_with_progress(entries, input$dstain_overlay_opacity, input$dstain_show_overlay, "dstain_sync_zoom")
   })
   
   # ===========================================================================
@@ -301,8 +299,7 @@ function(input, output, session) {
   
   output$sdonor_reset_zoom_btn_ui <- renderUI({
     req(length(sdonor_entries_rv()) > 0)
-    actionButton("sdonor_reset_zoom_btn", lbl_reset_image_zoom,
-                 style = sprintf("background-color:%s; border-color:%s; color:#fff; font-size:16px;", action_button_color, action_button_color))
+    reset_zoom_btn_ui("sdonor_reset_zoom_btn")
   })
   
   output$sdonor_annotation_ui <- renderUI({ render_annotation_master_ui(sdonor_entries_rv(), id_prefix = "sdonor", varying_field = "donor") })
@@ -347,18 +344,7 @@ function(input, output, session) {
     
     entries <- sort_entries_by(entries, "donor")
     sdonor_entries_rv(entries)
-    
-    images <- shiny::withProgress(message = "Loading images...", value = 0, {
-      build_images_payload(entries, input$sdonor_overlay_opacity, input$sdonor_show_overlay,
-                           progress_callback = function(done, total) {
-                             shiny::setProgress(value = done / total, detail = sprintf("Fetching annotations: %d of %d", done, total))
-                           })
-    })
-    # syncCheckboxId names the checkbox for the JS to check LIVE on every
-    # zoom/pan event, rather than a fixed value baked in at load time —
-    # that's what lets unchecking it after images are already loaded take
-    # effect immediately, with no reload needed.
-    session$onFlushed(function() session$sendCustomMessage("loadImages", list(images = images, syncCheckboxId = "sdonor_sync_zoom")), once = TRUE)
+    load_images_with_progress(entries, input$sdonor_overlay_opacity, input$sdonor_show_overlay, "sdonor_sync_zoom")
   })
   
   # ===========================================================================
@@ -402,8 +388,7 @@ function(input, output, session) {
   
   output$sregion_reset_zoom_btn_ui <- renderUI({
     req(length(sregion_entries_rv()) > 0)
-    actionButton("sregion_reset_zoom_btn", lbl_reset_image_zoom,
-                 style = sprintf("background-color:%s; border-color:%s; color:#fff; font-size:16px;", action_button_color, action_button_color))
+    reset_zoom_btn_ui("sregion_reset_zoom_btn")
   })
   
   output$sregion_annotation_ui <- renderUI({ render_annotation_master_ui(sregion_entries_rv(), id_prefix = "sregion", varying_field = "region") })
@@ -423,18 +408,7 @@ function(input, output, session) {
     
     entries <- sort_entries_by(entries, "region")
     sregion_entries_rv(entries)
-    
-    images <- shiny::withProgress(message = "Loading images...", value = 0, {
-      build_images_payload(entries, input$sregion_overlay_opacity, input$sregion_show_overlay,
-                           progress_callback = function(done, total) {
-                             shiny::setProgress(value = done / total, detail = sprintf("Fetching annotations: %d of %d", done, total))
-                           })
-    })
-    # syncCheckboxId names the checkbox for the JS to check LIVE on every
-    # zoom/pan event, rather than a fixed value baked in at load time —
-    # that's what lets unchecking it after images are already loaded take
-    # effect immediately, with no reload needed.
-    session$onFlushed(function() session$sendCustomMessage("loadImages", list(images = images, syncCheckboxId = "sregion_sync_zoom")), once = TRUE)
+    load_images_with_progress(entries, input$sregion_overlay_opacity, input$sregion_show_overlay, "sregion_sync_zoom")
   })
   
   # ===========================================================================
@@ -502,22 +476,21 @@ function(input, output, session) {
   )
   
   # shared handler for every page's donor-info icon (donor_info_trigger(),
-  # functions.r) — one modal mechanism for Home's context card, Compare
-  # Stains'/Compare Regions' context card, and Compare Donors' per-image
-  # icons, all driven by the SAME click event rather than four separate
-  # handlers. region/stain arrive as empty strings (not real values) when
-  # donor_info_trigger() was given NULL for either, which happens on
-  # Compare Regions specifically (no single fixed region there).
+  # functions.r) — one modal for Home/Compare Stains/Compare Regions'
+  # context cards and Compare Donors' per-image icons. region/stain arrive
+  # as empty strings when donor_info_trigger() was given NULL for either
+  # (Compare Regions, which has no single fixed region).
   observeEvent(input$donor_info_click, {
     info <- input$donor_info_click
     req(is_selected(info$donor))
     region <- if (!is.null(info$region) && nzchar(info$region)) info$region else NULL
     stain  <- if (!is.null(info$stain)  && nzchar(info$stain))  info$stain  else NULL
     mode <- info$mode %||% "combined"
+    all_fields <- isTRUE(info$allFields)
     
     content <- switch(mode,
                       "demo" = render_donor_demo_clinical(info$donor),
-                      "qnp"  = render_donor_metadata_qnp_block(info$donor, region, stain, standalone = TRUE),
+                      "qnp"  = render_donor_metadata_qnp_block(info$donor, region, stain, standalone = TRUE, all_fields = all_fields),
                       render_donor_metadata_list(info$donor, image_region = region, image_stain = stain)
     )
     title_suffix <- switch(mode, "demo" = " — demographic & clinical", "qnp" = " — QNP", "")
