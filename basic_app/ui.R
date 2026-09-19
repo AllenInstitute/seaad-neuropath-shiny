@@ -53,6 +53,7 @@ tagList(
          the .navbar rule above so it correctly overrides it */
       .navbar-brand {
         font-family: 'AllenHeadlineBold', sans-serif !important;
+        font-weight: bold !important;
       }
 
       /* explicit navbar height, so the scratchpad and top-bar links below

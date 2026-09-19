@@ -625,10 +625,11 @@ iddonors_filter_active <- function(store, id, val) {
   !isTRUE(all.equal(val, get(id, envir = store, inherits = FALSE)))
 }
 
-# unique stain groups among the (already percent-only) qnp_fields, in the
+# unique stain groups among the given fields (default: the already
+# percent-only qnp_fields, for the sidebar's Stain-mode controls), in the
 # order they're declared in global.r — not alphabetical.
-get_qnp_stain_groups <- function() {
-  groups <- vapply(qnp_fields, function(f) f$stain_group, character(1))
+get_qnp_stain_groups <- function(fields = qnp_fields) {
+  groups <- vapply(fields, function(f) f$stain_group, character(1))
   groups[!duplicated(groups)]
 }
 
@@ -1148,8 +1149,11 @@ render_donor_all_metadata <- function(donor_id) {
       bslib::card_header(hdg_qnp, style = purple_card_header_style()),
       bslib::card_body(
         # one region per line (not inline) — click a region to see its
-        # subregions below.
-        shiny::radioButtons("iddonors_popup_region_sel", NULL, choices = region_choices, selected = donor_regions[1], inline = FALSE),
+        # subregions below. starts with nothing checked (selected =
+        # character(0)) rather than defaulting to the first region, so
+        # no data shows until the user actually picks one.
+        shiny::radioButtons("iddonors_popup_region_sel", NULL, choices = region_choices, selected = character(0), inline = FALSE),
+        shiny::selectInput("iddonors_popup_stain_sel", "Stain", choices = with_placeholder(get_qnp_stain_groups(qnp_fields_all))),
         shiny::radioButtons(
           "iddonors_popup_qnp_view_mode", "Show QNP as:",
           choices = c("Global average (% only)" = "global", "All values by layer" = "layers"),
@@ -1169,7 +1173,9 @@ render_donor_all_metadata <- function(donor_id) {
 # view_mode "global": ONE card — every percent-type field (qnp_fields,
 #   already percent-only), averaged across this donor's subregions in
 #   this region.
-render_donor_qnp_region_detail <- function(donor_id, region, view_mode = "layers") {
+# stain, if given, narrows either field list down to just that one
+# stain_group — NULL (the default) shows every stain's fields.
+render_donor_qnp_region_detail <- function(donor_id, region, view_mode = "layers", stain = NULL) {
   rows <- qnp_metadata[qnp_metadata$donor == donor_id & qnp_metadata$region == region, , drop = FALSE]
   if (nrow(rows) == 0) return(shiny::p("No QNP data on record for this donor in this region."))
   
@@ -1179,19 +1185,26 @@ render_donor_qnp_region_detail <- function(donor_id, region, view_mode = "layers
   # line_style) is the actual lever for inter-line spacing here.
   line_style <- "margin:0; line-height:1.15;"
   
+  narrow_to_stain <- function(fields) {
+    if (is.null(stain)) return(fields)
+    Filter(function(f) identical(f$stain_group, stain), fields)
+  }
+  
   if (identical(view_mode, "global")) {
-    vals <- Filter(Negate(is.null), lapply(qnp_fields, function(f) {
+    fields <- narrow_to_stain(qnp_fields)
+    vals <- Filter(Negate(is.null), lapply(fields, function(f) {
       v <- mean(rows[[f$id]], na.rm = TRUE)
       if (is.na(v)) return(NULL)
       shiny::tags$div(style = line_style, shiny::tags$strong(paste0(qnp_field_display_label(f$label), ": ")), shiny::tags$span(signif(v, 4)))
     }))
-    if (length(vals) == 0) return(shiny::p("No percent-field data for this donor/region."))
+    if (length(vals) == 0) return(shiny::p("No percent-field data for this donor/region/stain."))
     return(bslib::card(bslib::card_body(vals, gap = "0px")))
   }
   
-  cards <- lapply(seq_len(nrow(rows)), function(i) {
+  fields <- narrow_to_stain(qnp_fields_all)
+  cards <- Filter(Negate(is.null), lapply(seq_len(nrow(rows)), function(i) {
     r <- rows[i, , drop = FALSE]
-    vals <- Filter(Negate(is.null), lapply(qnp_fields_all, function(f) {
+    vals <- Filter(Negate(is.null), lapply(fields, function(f) {
       v <- r[[f$id]]
       if (is.null(v) || is.na(v)) return(NULL)
       shiny::tags$div(style = line_style, shiny::tags$strong(paste0(f$label, ": ")), shiny::tags$span(signif(v, 4)))
@@ -1202,8 +1215,9 @@ render_donor_qnp_region_detail <- function(donor_id, region, view_mode = "layers
       bslib::card_header(r$subregion),
       bslib::card_body(vals, gap = "0px")
     )
-  })
-  shiny::tagList(Filter(Negate(is.null), cards))
+  }))
+  if (length(cards) == 0) return(shiny::p("No QNP data for this stain in this region."))
+  shiny::tagList(cards)
 }
 
 # a plain HTML table of the full metadata for every matching donor.
