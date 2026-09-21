@@ -15,25 +15,25 @@ source("R/functions.R")
 # (derive_metadata_fields()); select fields' choices are auto-derived
 # unless hardcoded here.
 metadata_fields <- list(
-  list(id = "age_at_death",   label = "age at death",     type = "range",
+  list(id = "age_at_death", label = "age at death", type = "range",
        csv_column = "Age at death (years)"),
-  list(id = "sex",             label = "sex",              type = "select",
+  list(id = "sex", label = "sex", type = "select",
        choices = c("Female", "Male"), csv_column = "Sex"),
-  list(id = "apoe_genotype",   label = "APOE genotype",    type = "select",
+  list(id = "apoe_genotype", label = "APOE genotype", type = "select",
        choices = c("2/2", "2/3", "2/4", "3/3", "3/4", "4/4"), csv_column = "APOE genotype"),
-  list(id = "cog_status",      label = "cognitive status", type = "select",
+  list(id = "cog_status", label = "cognitive status", type = "select",
        choices = c("Dementia", "No dementia"), csv_column = "Cognitive status"),
-  list(id = "adnc",            label = "ADNC",             type = "select",
+  list(id = "adnc", label = "ADNC", type = "select",
        choices = c("Not AD", "Low", "Intermediate", "High"), csv_column = "ADNC"),
-  list(id = "thal_phase",      label = "thal phase",       type = "select",
+  list(id = "thal_phase", label = "thal phase", type = "select",
        choices = as.character(0:5), csv_column = "Thal phase"),
-  list(id = "braak_stage",     label = "braak stage",      type = "select",
+  list(id = "braak_stage", label = "braak stage", type = "select",
        choices = c("0", "I", "II", "III", "IV", "V", "VI"), csv_column = "Braak stage"),
-  list(id = "cerad_score",     label = "CERAD score",      type = "select",
+  list(id = "cerad_score", label = "CERAD score", type = "select",
        choices = c("Absent", "Sparse", "Moderate", "Frequent"), csv_column = "CERAD score"),
   list(id = "years_education", label = "years of education", type = "range",
        csv_column = "Years of education (years)"),
-  list(id = "cps",             label = "CPS", type = "range",
+  list(id = "cps", label = "CPS", type = "range",
        csv_column = "Continuous Pseudo-progression Score")
 )
 
@@ -49,11 +49,7 @@ metadata_fields <- derive_metadata_fields(metadata_fields, donor_metadata)
 # annotation_name (or subregion) is only needed on annotation-xml rows.
 # width/height are optional on RAW_IMAGE rows; if absent, the app reads
 # them live from the .svs file's own header (read_tiff_dimensions()).
-#
-# increase this if you see "could not fetch ... Timeout was reached" at
-# startup/load time — the S3 endpoint can be slow under load.
 annotation_fetch_timeout_sec <- 60
-
 manifest_csv_path <- "ins/260909_manifest_fill.csv"
 
 csv_entries <- tryCatch(read_manifest_csv_entries(manifest_csv_path), error = function(e) {
@@ -77,95 +73,91 @@ metadata_display_groups <- list(
 # from a separate csv (qnp_metadata_csv_path below). Every field is
 # numeric. stain_group only organizes the filter UI (one accordion panel
 # per stain) — it doesn't need to match the csv itself.
-#
-# csv_column values below are PLACEHOLDER descriptions, not confirmed
-# against a real QNP csv — replace with the exact header text once you
-# have that file, or every field will warn "missing column" at startup.
+
 qnp_fields <- list(
-  list(id = "avg_6e10_object_area",              label = "Average object area",
+  list(id = "avg_6e10_object_area",              label = "Average 6E10+ object area",
        stain_group = "6E10", csv_column = "average 6e10 positive object area"),
-  list(id = "avg_6e10_object_median_diameter",    label = "Average object median diameter",
+  list(id = "avg_6e10_object_median_diameter",    label = "Average 6E10+ object median diameter",
        stain_group = "6E10", csv_column = "average 6e10 positive object median diameter"),
-  list(id = "n_6e10_objects_per_area",            label = "Number of objects per area",
+  list(id = "n_6e10_objects_per_area",            label = "number of 6E10+ objects per area",
        stain_group = "6E10", csv_column = "number of 6e10 positive objects per area"),
-  list(id = "pct_6e10_dense_core_plaque_area",    label = "Percent dense core plaque area",
+  list(id = "pct_6e10_dense_core_plaque_area",    label = "% 6E10+ dense core plaque area",
        stain_group = "6E10", csv_column = "percent 6e10 dense core plaque area"),
-  list(id = "pct_6e10_diffuse_plaque_area",       label = "Percent diffuse plaque area",
+  list(id = "pct_6e10_diffuse_plaque_area",       label = "% 6E10+ diffuse plaque area",
        stain_group = "6E10", csv_column = "percent 6e10 diffuse plaque area"),
-  list(id = "pct_6e10_fibrilar_plaque_area",      label = "Percent fibrilar plaque area",
+  list(id = "pct_6e10_fibrilar_plaque_area",      label = "% 6E10+ fibrilar plaque area",
        stain_group = "6E10", csv_column = "percent 6e10 fibrilar plaque area"),
-  list(id = "pct_6e10_positive_area",             label = "Percent positive area",
+  list(id = "pct_6e10_positive_area",             label = "% 6E10+ positive area",
        stain_group = "6E10", csv_column = "percent 6e10 positive area"),
   
-  list(id = "avg_iba1_process_area_per_cell",     label = "Average process area per cell",
+  list(id = "avg_iba1_process_area_per_cell",     label = "Average IBA1+ process area per cell",
        stain_group = "Iba1", csv_column = "average Iba1 positive process area per cell"),
-  list(id = "avg_iba1_process_length_per_cell",   label = "Average process length per cell",
+  list(id = "avg_iba1_process_length_per_cell",   label = "Average IBA1+ process length per cell",
        stain_group = "Iba1", csv_column = "average Iba1 positive process length per cell"),
-  list(id = "n_iba1_cells_per_area",              label = "Number of cells per area",
+  list(id = "n_iba1_cells_per_area",              label = "Number IBA1+ of cells per area",
        stain_group = "Iba1", csv_column = "number of Iba1 positive cells per area"),
-  list(id = "n_iba1_activated_cells_per_area",    label = "Number of activated cells per area",
+  list(id = "n_iba1_activated_cells_per_area",    label = "Number of IBA1+ activated cells per area",
        stain_group = "Iba1", csv_column = "number of activated Iba1 positive cells per area"),
-  list(id = "n_iba1_inactivated_cells_per_area",  label = "Number of inactivated cells per area",
+  list(id = "n_iba1_inactivated_cells_per_area",  label = "Number of IBA1+ inactivated cells per area",
        stain_group = "Iba1", csv_column = "number of inactivated Iba1 positive cells per area"),
-  list(id = "pct_iba1_positive_area",             label = "Percent positive area",
+  list(id = "pct_iba1_positive_area",             label = "Percent IBA1+ area",
        stain_group = "Iba1", csv_column = "percent Iba1 positive area"),
   
-  list(id = "n_6e10_coloc_iba1_per_area",         label = "Number of 6E10 objects colocalized with Iba1 per area",
+  list(id = "n_6e10_coloc_iba1_per_area",         label = "Number of 6E10+/IBA1+ colocalized objects per area",
        stain_group = "6E10 x Iba1", csv_column = "number of 6e10 positive objects colocalized with Iba1 positive objects per area"),
   list(id = "pct_6e10_coloc_iba1",                label = "Percent of 6E10 objects colocalized with Iba1",
        stain_group = "6E10 x Iba1", csv_column = "percent of 6e10 positive objects colocalized with Iba1 positive objects"),
   
-  list(id = "avg_hematoxylin_nucleus_area",       label = "Average nucleus area",
+  list(id = "avg_hematoxylin_nucleus_area",       label = "Average hematoxylin+ nucleus area",
        stain_group = "Hematoxylin", csv_column = "average Hematoxylin positive nucleus area"),
-  list(id = "avg_hematoxylin_nucleus_perimeter",  label = "Average nucleus perimeter",
+  list(id = "avg_hematoxylin_nucleus_perimeter",  label = "Average hematoxylin+ nucleus perimeter",
        stain_group = "Hematoxylin", csv_column = "average Hematoxylin positive nucleus perimeter"),
-  list(id = "avg_hematoxylin_nucleus_roundness",  label = "Average nucleus roundness",
+  list(id = "avg_hematoxylin_nucleus_roundness",  label = "Average hematoxylin+ nucleus roundness",
        stain_group = "Hematoxylin", csv_column = "average Hematoxylin positive nucleus roundness"),
-  list(id = "n_hematoxylin_nuclei_per_area",      label = "Number of nuclei per area",
+  list(id = "n_hematoxylin_nuclei_per_area",      label = "Number of hematoxylin+ nuclei per area",
        stain_group = "Hematoxylin", csv_column = "number of Hematoxylin positive nuclei per area"),
   
-  list(id = "pct_gfap_positive_area",             label = "Percent positive area",
+  list(id = "pct_gfap_positive_area",             label = "Percent GFAP+ area",
        stain_group = "GFAP", csv_column = "percent GFAP positive area"),
   
-  list(id = "avg_asyn_cell_area",                 label = "Average cell area",
+  list(id = "avg_asyn_cell_area",                 label = "Average a-syn+ cell area",
        stain_group = "aSyn", csv_column = "average aSyn positive cell area"),
-  list(id = "n_asyn_cells_per_area",              label = "Number of cells per area",
+  list(id = "n_asyn_cells_per_area",              label = "Number of a-syn+ cells per area",
        stain_group = "aSyn", csv_column = "number of aSyn positive cells per area"),
   list(id = "pct_asyn_positive_area",             label = "Percent positive area",
        stain_group = "aSyn", csv_column = "percent aSyn positive area"),
   
-  list(id = "avg_at8_cell_area",                  label = "Average cell area",
+  list(id = "avg_at8_cell_area",                  label = "Average AT8+ cell area",
        stain_group = "AT8", csv_column = "average AT8 positive cell area"),
-  list(id = "n_at8_cells_per_area",               label = "Number of cells per area",
+  list(id = "n_at8_cells_per_area",               label = "Number of AT8+ cells per area",
        stain_group = "AT8", csv_column = "number of AT8 positive cells per area"),
-  list(id = "pct_at8_positive_area",              label = "Percent positive area",
+  list(id = "pct_at8_positive_area",              label = "Percent AT8+ area",
        stain_group = "AT8", csv_column = "percent AT8 positive area"),
   
-  list(id = "avg_ptdp43_cell_area",               label = "Average cell area",
+  list(id = "avg_ptdp43_cell_area",               label = "Average pTDP-43+ cell area",
        stain_group = "pTDP43", csv_column = "average pTDP43 positive cell area"),
-  list(id = "n_ptdp43_cells_per_area",            label = "Number of cells per area",
+  list(id = "n_ptdp43_cells_per_area",            label = "Number of pTDP-43+ cells per area",
        stain_group = "pTDP43", csv_column = "number of pTDP43 positive cells per area"),
-  list(id = "pct_ptdp43_positive_area",           label = "Percent positive area",
+  list(id = "pct_ptdp43_positive_area",           label = "Percent pTDP-43+ area",
        stain_group = "pTDP43", csv_column = "percent pTDP43 positive area"),
   
-  list(id = "avg_neun_cell_area",                 label = "Average cell area",
+  list(id = "avg_neun_cell_area",                 label = "Average NeuN+ cell area",
        stain_group = "NeuN", csv_column = "average NeuN positive cell area"),
-  list(id = "n_neun_cells_per_area",              label = "Number of cells per area",
+  list(id = "n_neun_cells_per_area",              label = "Number of NeuN+ cells per area",
        stain_group = "NeuN", csv_column = "number of NeuN positive cells per area"),
-  list(id = "pct_neun_positive_area",             label = "Percent positive area",
+  list(id = "pct_neun_positive_area",             label = "Percent NeuN+ area",
        stain_group = "NeuN", csv_column = "percent NeuN positive area")
 )
 
 # donor/region_grouping/region/subregion column headers in the QNP csv.
 # region_grouping is optional — falls back to region itself if the column
 # doesn't exist (see load_qnp_metadata_csv()).
-qnp_donor_column           <- "Donor ID"
+qnp_donor_column <- "Donor ID"
 qnp_region_grouping_column <- "region"
-qnp_region_column          <- "brain region"
-qnp_subregion_column       <- "analysis region"
+qnp_region_column <- "brain region"
+qnp_subregion_column <- "analysis region"
 
 qnp_metadata_csv_path <- "ins/QNPMetadata.csv"  # <- point this at your real QNP csv
-
 qnp_metadata <- load_qnp_metadata_csv(qnp_metadata_csv_path)
 
 # precomputed ONCE — every place needing "the QNP rows for this
@@ -193,18 +185,13 @@ qnp_fields_all <- qnp_fields
 # own naming (qnp_metadata$region, qnp_fields$stain_group) — used to find
 # the right QNP rows for the region+stain currently being viewed in an
 # image-viewer donor popup.
-#
-# THESE ARE BEST-EFFORT GUESSES, not confirmed against a real QNP csv.
-# Run sort(unique(qnp_metadata$region)) once you have real data and
-# correct any right-hand side that doesn't match. The stain crosswalk is
-# grounded in inventory_manifest.R's stain_type naming, mapping each
-# combined-image stain to every qnp_fields stain_group it covers.
 qnp_region_crosswalk <- list(
   "Dorsolateral Prefrontal Cortex (DLPFC)"                           = "DFC",
   "Medial Entorhinal Cortex and Hippocampus (MEC-HIP)"               = c("MEC", "HIP"),
   "Middle Temporal Gyrus (MTG) and Superior Temporal Gyrus (STG)"    = c("MTG", "STG"),
   "Primary Visual Cortex - Extrastriate Occipital Cortex (V1C-ESOC)" = c("V1C", "ESOC")
 )
+
 # qnp_metadata$region also has AnG, CaH, FI, and ITG, with no
 # corresponding manifest/image region — expected, since QNP has more
 # region coverage than the image viewers. Those four stay fully usable on
@@ -286,7 +273,7 @@ qnp_global_sentinel <- "Global"
 
 # Filter Donors tab's exact title — compared against input$main_nav in
 # server.r, and used by ui.r's tabPanel() itself, so the two can't drift.
-filter_donors_tab_name <- "Filter Donors"
+filter_donors_tab_name <- "filter donors"
 
 # precomputed ONCE per page prefix at startup, not per click/session —
 # everything it's built from is static once the CSVs above are loaded.

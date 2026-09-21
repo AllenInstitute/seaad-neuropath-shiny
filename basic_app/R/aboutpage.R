@@ -1,14 +1,5 @@
 # =============================================================================
 # R/aboutpage.R
-#
-# The About tab's content lives entirely here, separate from the rest of the
-# app, specifically so it can be edited (contact info, usage notes,
-# acknowledgements, etc.) without touching ui.R/server.R/global.R/functions.R.
-#
-# Shiny automatically sources every .R file in an R/ subdirectory alongside
-# the app before global.R/ui.R/server.R run, so these two functions are
-# already available by the time ui.R and server.R need them — no explicit
-# source() call required.
 # =============================================================================
 
 # Returns the About tabPanel. Called once from ui.R, inside navbarPage(...).

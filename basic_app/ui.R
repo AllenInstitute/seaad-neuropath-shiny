@@ -228,17 +228,6 @@ tagList(
   tags$head(
     tags$script(src = "https://cdn.jsdelivr.net/npm/openseadragon@4/build/openseadragon/openseadragon.min.js"),
     tags$script(HTML("
-      // navigator.clipboard needs a SECURE CONTEXT (https, or localhost) —
-      // on a plain http:// deployment it doesn't exist at all, and calling
-      // it does nothing with no visible error. Sandboxed webviews (e.g.
-      // RStudio's built-in Viewer pane) can ALSO fail even when the API
-      // exists, because they often can't reach the system clipboard at
-      // all — if that's what's happening here, opening the app in a real
-      // browser tab (not the Viewer pane) should resolve it immediately.
-      //
-      // el is the CLICKED element (pass `this` from onclick) — flashes it
-      // to 'Copied!' briefly so clicking always gives visible confirmation
-      // either way, rather than a silent success-or-failure.
       function copyTextRobust(text, el) {
         function flash() {
           if (!el) return;
@@ -303,7 +292,7 @@ tagList(
     # =========================================================================
     # home — single donor/region/stain, not a comparison.
     # =========================================================================
-    tabPanel("Home",
+    tabPanel("home",
              sidebarLayout(
                sidebarPanel(
                  width = 4,
@@ -340,11 +329,11 @@ tagList(
              )
     ),
     
-    navbarMenu("Comparisons",
+    navbarMenu("comparisons",
                # =========================================================================
                # compare stains — constraints: single donor, single region. varies: stain.
                # =========================================================================
-               tabPanel("Compare Stains",
+               tabPanel("compare stains",
                         sidebarLayout(
                           sidebarPanel(
                             width = 4,
@@ -384,7 +373,7 @@ tagList(
                # =========================================================================
                # compare donors — constraints: single stain, single region. varies: donor.
                # =========================================================================
-               tabPanel("Compare Donors",
+               tabPanel("compare donors",
                         sidebarLayout(
                           sidebarPanel(
                             width = 4,
@@ -454,7 +443,7 @@ tagList(
                # compare regions — constraints: single donor, single stain.
                # varies: region (every region that donor+stain combination has).
                # =========================================================================
-               tabPanel("Compare Regions",
+               tabPanel("compare regions",
                         sidebarLayout(
                           sidebarPanel(
                             width = 4,
