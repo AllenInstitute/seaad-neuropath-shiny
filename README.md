@@ -2,7 +2,9 @@
 RShiny app to visualize neuropathology images
 
 ## Local Use
-Clone the repository from GitHub or download the source code from the [release page](https://github.com/AllenInstitute/seaad-neuropath-shiny/releases/tag/v0.2.0).
+1. Access on [molgen-shiny.org](https://molgen-shiny.org/seaad_np_viewer/) (might need to request access through ServiceNow)
+
+2. Clone the repository from GitHub or download the source code from the [release page](https://github.com/AllenInstitute/seaad-neuropath-shiny/releases/tag/v0.2.0).
 
 ```sh
 git clone --branch v0.2.0 --depth 1 git@github.com:AllenInstitute/seaad-neuropath-shiny.git
