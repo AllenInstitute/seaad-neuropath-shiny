@@ -587,26 +587,95 @@ function(input, output, session) {
     build_qplot_from_inputs(input, data)
   })
   
+  # Y-axis measure picker — region, if given (single-region mode with a
+  # region actually chosen), narrows the choices to measures that
+  # actually have data there, so it never offers a dead-end pick. Rebuilt
+  # whenever the region changes; any no-longer-valid selection is simply
+  # dropped (matching how other cascading selectors on this page behave).
+  output$qplot_y_fields_ui <- renderUI({
+    region <- if (identical(input$qplot_compare_mode, "single") && is_selected(input$qplot_region_sel)) input$qplot_region_sel else NULL
+    selectizeInput(
+      "qplot_y_fields", sprintf("Y axis (up to %d QNP measures)", qnp_graph_color_cap),
+      choices = qnp_graph_field_choices_by_stain(region), multiple = TRUE,
+      options = list(maxItems = qnp_graph_color_cap, plugins = list("remove_button"))
+    )
+  })
+  
+  # custom-range controls — bounds/default computed from whatever's
+  # actually plotted right now, so they start matching the data instead
+  # of an arbitrary fixed range. Rebuilt (or removed, via req()) whenever
+  # the relevant selection changes. X is a histoslider (build_histoslider(),
+  # functions.r) — the same widget and metadata_chart_color styling the
+  # comparison pages' own metadata filters use; Y stays a plain range
+  # slider (rounded to 1 decimal place — qnp_graph_slider_bounds()).
+  output$qplot_x_range_ui <- renderUI({
+    x_field <- input$qplot_x_field
+    req(is_selected(x_field), !(x_field %in% qnp_graph_categorical_fields))
+    data <- qplot_data()
+    req(!is.null(data), nrow(data) > 0, x_field %in% names(data))
+    vals <- data[[x_field]]
+    vals <- vals[!is.na(vals)]
+    req(length(vals) > 0)
+    # CPS's range always includes 0 and 1 (its nominal bounds), same as
+    # before — build_histoslider() derives its draggable start/end
+    # straight from these values, so folding 0/1 in here is what lets
+    # the handles reach them even if the actual data doesn't.
+    if (identical(x_field, qnp_graph_cps_field)) vals <- c(vals, 0, 1)
+    tagList(tags$label("X range"), build_histoslider("qplot_x_range", vals))
+  })
+  
+  output$qplot_y_range_ui <- renderUI({
+    y_fields <- input$qplot_y_fields
+    req(length(y_fields) > 0)
+    data <- qplot_data()
+    req(!is.null(data), nrow(data) > 0)
+    present_fields <- intersect(y_fields, names(data))
+    req(length(present_fields) > 0)
+    vals <- unlist(data[, present_fields, drop = FALSE])
+    vals <- vals[!is.na(vals)]
+    req(length(vals) > 0)
+    b <- qnp_graph_slider_bounds(vals)
+    sliderInput("qplot_y_range", "Y range", min = b$min, max = b$max, value = b$default, step = b$step)
+  })
+  
   # plotly wrapping is display-only — the download handler below ggsave()s
   # the plain ggplot object from qplot_object(), never this. source names
   # this plot for the click observer below (event_data() needs it to
-  # target this specific widget).
+  # target this specific widget); event_register() (right after ggplotly(),
+  # before any further modification) is what makes plotly actually emit
+  # plotly_click events for it. boxmode="group" fixes a real plotly
+  # limitation: ggplotly() doesn't translate a dodged geom_boxplot's own
+  # position correctly on its own, so without this every measure's boxes
+  # stack on top of each other even though their jittered points DO dodge
+  # correctly. The legend's own y position is pushed further down
+  # (plotly's native layout, not just the ggplot2 theme's legend.box.spacing)
+  # since ggplotly() doesn't always preserve that theme spacing faithfully.
+  # suppressWarnings() is for one specific, expected warning — "Ignoring
+  # unknown aesthetics: text and key" — since ggplot2 itself doesn't
+  # recognize plotly's own text/key aesthetics; harmless.
   output$qplot_output <- plotly::renderPlotly({
     data <- qplot_data()
     shiny::validate(shiny::need(!is.null(data), "Select the required fields above to see a plot."))
     shiny::validate(shiny::need(nrow(data) > 0, "No QNP data available for this selection."))
     p <- qplot_object()
     shiny::validate(shiny::need(!is.null(p), "Select the required fields above to see a plot."))
-    plotly::ggplotly(p, tooltip = "text", source = "qplot_output")
+    pl <- suppressWarnings(plotly::ggplotly(p, tooltip = "text", source = "qplot_output"))
+    pl <- plotly::event_register(pl, "plotly_click")
+    plotly::layout(pl, boxmode = "group", legend = list(y = -0.35, yanchor = "top"))
   })
   
   # clicking a plotted point copies its donor id. The point's `key` aes
   # (mapped from donor in build_qnp_grouped_boxplot()/build_qnp_multi_scatter())
   # arrives here as customdata via plotly's click event; clicking a
   # boxplot's box shape itself (no key mapped there) has no key and is a
-  # no-op.
-  observeEvent(plotly::event_data("plotly_click", source = "qplot_output"), {
-    d <- plotly::event_data("plotly_click", source = "qplot_output")
+  # no-op. suppressWarnings(): event_data() warns "source not registered"
+  # any time output$qplot_output isn't currently a real, rendered plotly
+  # widget (e.g. before x/y are chosen, when it shows a validation
+  # message instead) — an expected, harmless state, not a bug, since
+  # event_register() (above) does register this source once a plot
+  # actually renders.
+  observeEvent(suppressWarnings(plotly::event_data("plotly_click", source = "qplot_output")), {
+    d <- suppressWarnings(plotly::event_data("plotly_click", source = "qplot_output"))
     req(!is.null(d$key), nzchar(d$key))
     session$sendCustomMessage("copyToClipboard", list(text = d$key))
     showNotification(sprintf("Copied donor id: %s", d$key), type = "message")
@@ -622,7 +691,7 @@ function(input, output, session) {
     content = function(file) {
       p <- qplot_object()
       req(!is.null(p))
-      ggplot2::ggsave(file, plot = p, width = 12, height = 7, dpi = 150)
+      suppressWarnings(ggplot2::ggsave(file, plot = p, width = 12, height = 7, dpi = 150))
     }
   )
   
@@ -631,11 +700,7 @@ function(input, output, session) {
     updateSelectInput(session, "qplot_grouping_sel", selected = "")
     updateSelectInput(session, "qplot_region_sel", selected = "")
     updateSelectInput(session, "qplot_x_field", selected = "")
-    updateSelectizeInput(session, "qplot_y_fields", selected = character(0))
-    updateNumericInput(session, "qplot_x_min", value = NA)
-    updateNumericInput(session, "qplot_x_max", value = NA)
-    updateNumericInput(session, "qplot_y_min", value = NA)
-    updateNumericInput(session, "qplot_y_max", value = NA)
+    updateSliderInput(session, "qplot_point_size", value = qnp_graph_point_size)
     showNotification(msg_page_reset, type = "message")
   })
   

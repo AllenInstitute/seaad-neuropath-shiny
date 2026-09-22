@@ -544,23 +544,15 @@ tagList(
                             ),
                             tags$hr(),
                             selectInput("qplot_x_field", "X axis", choices = with_placeholder_grouped(qnp_graph_x_choices())),
-                            selectizeInput(
-                              "qplot_y_fields", sprintf("Y axis (up to %d QNP measures)", qnp_graph_color_cap),
-                              choices = qnp_graph_field_choices_by_stain(), multiple = TRUE,
-                              options = list(maxItems = qnp_graph_color_cap, plugins = list("remove_button"))
-                            ),
-                            tags$hr(),
-                            strong("Custom axis ranges (optional)"),
-                            conditionalPanel(
-                              condition = sprintf("input.qplot_x_field != '' && ['%s'].indexOf(input.qplot_x_field) === -1", paste(qnp_graph_categorical_fields, collapse = "','")),
-                              fluidRow(
-                                column(6, numericInput("qplot_x_min", "X min", value = NA)),
-                                column(6, numericInput("qplot_x_max", "X max", value = NA))
-                              )
-                            ),
-                            fluidRow(
-                              column(6, numericInput("qplot_y_min", "Y min", value = NA)),
-                              column(6, numericInput("qplot_y_max", "Y max", value = NA))
+                            uiOutput("qplot_y_fields_ui"),
+                            bslib::accordion(
+                              bslib::accordion_panel(
+                                title = "Plot customization",
+                                sliderInput("qplot_point_size", "Point size", min = 1, max = 6, value = qnp_graph_point_size, step = 0.5),
+                                uiOutput("qplot_x_range_ui"),
+                                uiOutput("qplot_y_range_ui")
+                              ),
+                              open = FALSE
                             ),
                             tags$hr(),
                             actionButton("qplot_reset_btn", "Reset", style = sprintf("background-color:%s; border-color:%s; color:#fff;", reset_button_color, reset_button_color))

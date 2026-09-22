@@ -1813,12 +1813,24 @@ qnp_graph_field_choices <- function() {
 
 # QNP measures grouped into one optgroup per stain (rather than one flat
 # ~30-item list) — both axis pickers use this, so a stain's own measures
-# sit together and neither needs as much scrolling to find one.
-qnp_graph_field_choices_by_stain <- function() {
-  groups <- get_qnp_stain_groups(qnp_fields_all)
+# sit together and neither needs as much scrolling to find one. region,
+# if given, narrows this down to only measures with at least one non-NA
+# value there (identify_qnp_field_values(), same lookup the actual plot
+# data uses) — so a single-region plot's y-axis picker never offers a
+# measure that region has no data for at all. NULL (the default, and
+# always used in "regions"/facet mode) shows every measure regardless.
+qnp_graph_field_choices_by_stain <- function(region = NULL) {
+  fields <- qnp_fields_all
+  if (!is.null(region)) {
+    fields <- Filter(function(f) {
+      vals <- identify_qnp_field_values(region, qnp_region_level_key(region), f$id)$value
+      any(!is.na(vals))
+    }, fields)
+  }
+  groups <- get_qnp_stain_groups(fields)
   stats::setNames(lapply(groups, function(g) {
-    fields <- Filter(function(f) identical(f$stain_group, g), qnp_fields_all)
-    stats::setNames(vapply(fields, function(f) f$id, character(1)), vapply(fields, function(f) f$label, character(1)))
+    group_fields <- Filter(function(f) identical(f$stain_group, g), fields)
+    stats::setNames(vapply(group_fields, function(f) f$id, character(1)), vapply(group_fields, function(f) f$label, character(1)))
   }), groups)
 }
 
@@ -1863,12 +1875,32 @@ qnp_graph_categorical_levels <- function(field_id) {
   Find(function(f) identical(f$id, field_id), metadata_fields)$choices
 }
 
-# a user-provided c(min, max) for coord_cartesian(), or NULL when either
-# side is left blank (numericInput's own NA default) — a partial range
-# isn't meaningful, so both have to be given for the override to apply.
-qnp_graph_axis_range <- function(min_val, max_val) {
-  if (is.na(min_val) || is.na(max_val)) return(NULL)
-  c(min_val, max_val)
+# a range control's c(min, max) for coord_cartesian() — NULL if the
+# control doesn't exist yet (e.g. no y fields chosen, so nothing to
+# compute bounds from). is_histoslider selects histoslider's own
+# reported-value format (a list with $start/$end — see
+# histoslider_range()) for the X-axis control, vs. a plain sliderInput's
+# own c(min, max) vector for the Y-axis one.
+qnp_graph_axis_range <- function(val, is_histoslider = FALSE) {
+  if (is_histoslider) return(histoslider_range(val))
+  if (is.null(val) || length(val) != 2) return(NULL)
+  val
+}
+
+# slider bounds for the Y-axis custom-range control, computed from the
+# actual plotted values: a default selection matching the data's own
+# range, a little padding beyond that so the slider's own min/max aren't
+# razor-tight against the default, and everything rounded to 1 decimal
+# place (both to keep the displayed numbers readable and because a step
+# with more decimal places than that reads as a rounding artifact, not a
+# meaningful position).
+qnp_graph_slider_bounds <- function(vals) {
+  rng <- range(vals, na.rm = TRUE)
+  span <- diff(rng)
+  if (span == 0) span <- max(abs(rng[1]), 1)
+  pad <- span * 0.1
+  step <- max(round(span / 100, 1), 0.1)
+  list(min = round(rng[1] - pad, 1), max = round(rng[2] + pad, 1), default = round(rng, 1), step = step)
 }
 
 # shared font styling for every QNP Graphs plot — axis tick labels in the
@@ -1884,11 +1916,23 @@ qnp_graph_font_theme <- function() {
 }
 
 # facet strip styling shared by both plot builders — black background,
-# white text, per request.
+# white text, and wider gaps between facet panels (per request; ggplot2's
+# own default panel.spacing reads as cramped once strips have a solid
+# background).
 qnp_graph_facet_theme <- function() {
   ggplot2::theme(
     strip.background = ggplot2::element_rect(fill = "black"),
-    strip.text        = ggplot2::element_text(color = "white")
+    strip.text        = ggplot2::element_text(color = "white"),
+    panel.spacing     = ggplot2::unit(1.5, "lines")
+  )
+}
+
+# bottom-placed legend shared by both plot builders, with extra space
+# above it so it doesn't crowd the x-axis title directly above it.
+qnp_graph_legend_theme <- function() {
+  ggplot2::theme(
+    legend.position    = "bottom",
+    legend.box.spacing = ggplot2::unit(20, "pt")
   )
 }
 
@@ -1965,13 +2009,14 @@ qnp_graph_color_palette <- function(n) {
 }
 
 # grouped boxplot: x = a categorical demographic/clinical field (or the
-# derived age_bucket), one dodged box (+ jittered points, hoverable and
-# clickable) per y measure within each x category. x-axis factor levels
-# come from qnp_graph_categorical_levels() — metadata_fields' own declared
+# derived age_bucket), one dodged box (+ jittered points, hoverable,
+# clickable, and sized via point_size — the qplot_point_size slider) per
+# y measure within each x category. x-axis factor levels come from
+# qnp_graph_categorical_levels() — metadata_fields' own declared
 # `choices` (e.g. cerad_score's Absent/Sparse/Moderate/Frequent), or
 # age_bucket's own 5-year bucket order — not alphabetical, so ordinal
 # fields read in their real order.
-build_qnp_grouped_boxplot <- function(long_data, x_field, x_label, facet = FALSE, y_range = NULL) {
+build_qnp_grouped_boxplot <- function(long_data, x_field, x_label, facet = FALSE, y_range = NULL, point_size = qnp_graph_point_size) {
   x_choices <- qnp_graph_categorical_levels(x_field)
   long_data[[x_field]] <- factor(long_data[[x_field]], levels = x_choices)
   long_data <- long_data[!is.na(long_data[[x_field]]) & !is.na(long_data$value), , drop = FALSE]
@@ -1987,16 +2032,16 @@ build_qnp_grouped_boxplot <- function(long_data, x_field, x_label, facet = FALSE
       # points jitter around the same center instead of aligning under
       # their own box.
       ggplot2::aes(color = measure, fill = measure, text = tooltip, key = donor),
-      position = ggplot2::position_jitterdodge(jitter.width = 0.12, dodge.width = 0.8),
-      alpha = 0.7, size = qnp_graph_point_size
+      position = ggplot2::position_jitterdodge(jitter.width = 0.06, dodge.width = 0.8),
+      alpha = 0.7, size = point_size
     ) +
     ggplot2::scale_fill_manual(values = palette, guide = "none") +
     # legend comes from color (a point's own key glyph is already a
     # borderless circle), not fill (a box) — per request.
     ggplot2::scale_color_manual(values = palette, name = NULL) +
-    ggplot2::labs(x = smart_lowercase(x_label), y = "value") +
+    ggplot2::labs(x = smart_lowercase(x_label), y = NULL) +
     ggplot2::theme_classic(base_size = qnp_graph_base_text_size) +
-    ggplot2::theme(legend.position = "bottom") +
+    qnp_graph_legend_theme() +
     qnp_graph_font_theme() +
     qnp_graph_facet_theme()
   
@@ -2012,18 +2057,18 @@ build_qnp_grouped_boxplot <- function(long_data, x_field, x_label, facet = FALSE
 # clip), so a value that falls slightly outside 0-1 still shows rather
 # than getting cut off. x_range/y_range, if given, override the axis
 # range outright (CPS's own 0/1-inclusive behavior included).
-build_qnp_multi_scatter <- function(long_data, x_field, x_label, x_is_cps = FALSE, facet = FALSE, x_range = NULL, y_range = NULL) {
+build_qnp_multi_scatter <- function(long_data, x_field, x_label, x_is_cps = FALSE, facet = FALSE, x_range = NULL, y_range = NULL, point_size = qnp_graph_point_size) {
   long_data <- long_data[!is.na(long_data[[x_field]]) & !is.na(long_data$value), , drop = FALSE]
   if (nrow(long_data) == 0) return(NULL)
   
   palette <- stats::setNames(qnp_graph_color_palette(nlevels(long_data$measure)), levels(long_data$measure))
   
   p <- ggplot2::ggplot(long_data, ggplot2::aes(x = .data[[x_field]], y = value, color = measure, text = tooltip, key = donor)) +
-    ggplot2::geom_point(alpha = 0.75, size = qnp_graph_point_size) +
+    ggplot2::geom_point(alpha = 0.75, size = point_size) +
     ggplot2::scale_color_manual(values = palette, name = NULL) +
-    ggplot2::labs(x = x_label, y = "value") +
+    ggplot2::labs(x = x_label, y = NULL) +
     ggplot2::theme_classic(base_size = qnp_graph_base_text_size) +
-    ggplot2::theme(legend.position = "bottom") +
+    qnp_graph_legend_theme() +
     qnp_graph_font_theme() +
     qnp_graph_facet_theme()
   
@@ -2072,9 +2117,10 @@ build_qplot_data_from_inputs <- function(input) {
 # dispatches to the right plot builder based on whether qplot_x_field is
 # one of the categorical fields, age_bucket included (-> grouped boxplot)
 # or not (-> scatter, CPS or a QNP measure) — keeps server.r's own render
-# a thin wrapper. Reads the optional custom axis ranges (qplot_x_min/max,
-# qplot_y_min/max) too, each only applying once BOTH its min and max are
-# given (qnp_graph_axis_range()).
+# a thin wrapper. Reads the optional custom axis ranges (qplot_x_range —
+# a histoslider, note the is_histoslider flag; qplot_y_range — a plain
+# range slider) too — NULL (not yet built, e.g. no y fields chosen) leaves
+# that axis on its normal automatic scaling (qnp_graph_axis_range()).
 build_qplot_from_inputs <- function(input, data) {
   x_field <- input$qplot_x_field
   y_fields <- input$qplot_y_fields
@@ -2084,14 +2130,15 @@ build_qplot_from_inputs <- function(input, data) {
   y_labels <- stats::setNames(vapply(y_fields, qnp_label, character(1)), y_fields)
   long_data <- build_qnp_graph_long(data, y_fields, y_labels)
   facet <- identical(input$qplot_compare_mode, "regions")
-  y_range <- qnp_graph_axis_range(input$qplot_y_min, input$qplot_y_max)
+  y_range <- qnp_graph_axis_range(input$qplot_y_range)
+  point_size <- if (is.null(input$qplot_point_size)) qnp_graph_point_size else input$qplot_point_size
   
   if (x_field %in% qnp_graph_categorical_fields) {
-    build_qnp_grouped_boxplot(long_data, x_field, qnp_graph_x_label(x_field), facet = facet, y_range = y_range)
+    build_qnp_grouped_boxplot(long_data, x_field, qnp_graph_x_label(x_field), facet = facet, y_range = y_range, point_size = point_size)
   } else {
     x_is_cps <- identical(x_field, qnp_graph_cps_field)
     x_label <- if (x_is_cps) "CPS" else qnp_label(x_field)
-    x_range <- qnp_graph_axis_range(input$qplot_x_min, input$qplot_x_max)
-    build_qnp_multi_scatter(long_data, x_field, x_label, x_is_cps = x_is_cps, facet = facet, x_range = x_range, y_range = y_range)
+    x_range <- qnp_graph_axis_range(input$qplot_x_range, is_histoslider = TRUE)
+    build_qnp_multi_scatter(long_data, x_field, x_label, x_is_cps = x_is_cps, facet = facet, x_range = x_range, y_range = y_range, point_size = point_size)
   }
 }

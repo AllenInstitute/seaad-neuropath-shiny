@@ -61,20 +61,35 @@ qnp_graph_age_bucket_levels <- age_buckets$levels
 
 # register the app's own custom fonts with R's graphics device too — CSS
 # @font-face (ui.r) only applies to HTML, never to plot images rendered
-# by ggplot2/showtext. Falls back to each theme's plain default font
-# rather than failing the app if the files can't be read this way (e.g.
-# an environment where the installed freetype doesn't support woff2).
+# by ggplot2/showtext. Uses the .ttf files under www/fonts/ (added
+# alongside the .woff2 ones ui.r's CSS already uses) — the .woff2 files
+# themselves errored here ("freetype: unknown file format") in an
+# environment whose freetype build doesn't support woff2. Falls back to
+# each theme's plain default font rather than failing the app if these
+# can't be read either.
 qnp_graph_axis_font  <- "sans-serif"
 qnp_graph_title_font <- "sans-serif"
-tryCatch({
-  sysfonts::font_add(family = "AllenTextLight", regular = "www/fonts/AllenInstituteText-Light.woff2")
-  sysfonts::font_add(family = "AllenHeadlineBold", regular = "www/fonts/AllenInstituteHeadline-Bold.woff2")
-  showtext::showtext_auto()
-  qnp_graph_axis_font  <- "AllenTextLight"
-  qnp_graph_title_font <- "AllenHeadlineBold"
-}, error = function(e) {
-  warning("could not register custom fonts for ggplot2 plots (", e$message, ") — falling back to the default font.")
-})
+qnp_graph_axis_font_path  <- "www/fonts/AllenInstituteText-Light.ttf"
+qnp_graph_title_font_path <- "www/fonts/AllenInstituteHeadline-Bold.ttf"
+if (file.exists(qnp_graph_axis_font_path) && file.exists(qnp_graph_title_font_path)) {
+  tryCatch({
+    sysfonts::font_add(family = "AllenTextLight", regular = qnp_graph_axis_font_path)
+    sysfonts::font_add(family = "AllenHeadlineBold", regular = qnp_graph_title_font_path)
+    showtext::showtext_auto()
+    qnp_graph_axis_font  <- "AllenTextLight"
+    qnp_graph_title_font <- "AllenHeadlineBold"
+  }, error = function(e) {
+    warning("could not register custom fonts for ggplot2 plots (", e$message, ") — falling back to the default font.")
+  })
+} else {
+  # names/paths the app checked don't match what's actually on disk —
+  # showing exactly what was searched (and from where) so this is fixable
+  # in one look, rather than a generic "not found" with no path to check.
+  warning(
+    "custom fonts for ggplot2 plots not found — checked for '", qnp_graph_axis_font_path, "' and '", qnp_graph_title_font_path,
+    "' relative to the working directory '", getwd(), "' — falling back to the default font."
+  )
+}
 
 # manifest source — a single csv covering any number of donors. required
 # columns per row: file_type, stain_type, donor, region, s3_uri.
