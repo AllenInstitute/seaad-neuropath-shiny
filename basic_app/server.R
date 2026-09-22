@@ -727,6 +727,27 @@ function(input, output, session) {
     plotly::config(pl, toImageButtonOptions = list(format = "png", filename = "qnp_graph", width = 1600, height = 1000, scale = 2))
   })
   
+  observe({
+    data <- qplot_data()
+    shinyjs::toggleState("qplot_download_btn", condition = !is.null(data) && nrow(data) > 0)
+  })
+  
+  # ggsave() on the plain ggplot object (never the plotly-wrapped one) —
+  # this renders through R's own graphics device, where the custom fonts
+  # are actually correctly registered (showtext, global.r). Plotly's own
+  # camera-icon export instead rasterizes via the browser's canvas API,
+  # which doesn't reliably keep a custom web font regardless of how the
+  # plotly layout itself is configured — a browser-side limitation, not
+  # something fixable from here, hence this separate, reliable path.
+  output$qplot_download_btn <- downloadHandler(
+    filename = function() sprintf("qnp_graph_%s.png", format(Sys.Date(), "%Y%m%d_%H%M")),
+    content = function(file) {
+      p <- qplot_object()
+      req(!is.null(p))
+      ggplot2::ggsave(file, plot = p, width = 12, height = 7, dpi = 200)
+    }
+  )
+  
   # clicking a plotted point copies its donor id. The point's `key` aes
   # (mapped from donor in build_qnp_grouped_boxplot()/build_qnp_multi_scatter())
   # arrives here as customdata via plotly's click event; clicking a

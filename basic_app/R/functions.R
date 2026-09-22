@@ -2054,7 +2054,7 @@ build_qnp_grouped_boxplot <- function(long_data, x_field, x_label, facet = FALSE
   )
   
   if (!is.null(y_range)) p <- p + ggplot2::coord_cartesian(ylim = y_range)
-  if (facet) p <- p + ggplot2::facet_wrap(~region, ncol = 3)
+  if (facet) p <- p + ggplot2::facet_wrap(~region, ncol = 3, axes = "all_x")
   p
 }
 
@@ -2111,7 +2111,7 @@ build_qnp_multi_scatter <- function(long_data, x_field, x_label, x_is_cps = FALS
   if (!is.null(final_xlim) || !is.null(y_range)) {
     p <- p + ggplot2::coord_cartesian(xlim = final_xlim, ylim = y_range)
   }
-  if (facet) p <- p + ggplot2::facet_wrap(~region, ncol = 3)
+  if (facet) p <- p + ggplot2::facet_wrap(~region, ncol = 3, axes = "all_x")
   p
 }
 

@@ -581,12 +581,17 @@ tagList(
                           ),
                           mainPanel(
                             width = 8,
-                            # no separate download button here — plotly's own toolbar
-                            # (top-right of the plot) already has a "Download plot as
-                            # png" camera icon. height is dynamic (server.r) rather
-                            # than fixed here, so a multi-row faceted plot gets taller
-                            # instead of squeezing more rows into the same box.
-                            uiOutput("qplot_output_wrapper")
+                            # height is dynamic (server.r) rather than fixed here, so a
+                            # multi-row faceted plot gets taller instead of squeezing
+                            # more rows into the same box.
+                            uiOutput("qplot_output_wrapper"),
+                            div(
+                              style = "margin-top:12px;",
+                              downloadButton("qplot_download_btn", "Download plot (.png)", 
+                                             style = sprintf("background-color:%s; border-color:%s; color:#fff;", 
+                                                             action_button_color, action_button_color)),
+                              
+                            )
                           )
                         )
                )
