@@ -155,7 +155,27 @@ tagList(
         --bs-table-bg: #fff;
         --bs-table-striped-bg: %s;
       }
-    ", metadata_chart_color, sidebar_divider_color, sidebar_bg_color, sidebar_divider_color, sidebar_divider_color, table_stripe_color)))
+    ", metadata_chart_color, sidebar_divider_color, sidebar_bg_color, sidebar_divider_color, sidebar_divider_color, table_stripe_color))),
+    
+    # every sliderInput app-wide (overlay opacity, donor-count, QNP Graphs'
+    # point-size/Y-range, etc.) — ionRangeSlider's own default blue is
+    # close to but not actually the app's brand color, so it's overridden
+    # here rather than left as a near-miss.
+    tags$style(HTML(sprintf("
+      .irs-bar, .irs-bar-edge {
+        background: %s !important;
+        border-color: %s !important;
+      }
+      .irs-single, .irs-from, .irs-to {
+        background-color: %s !important;
+      }
+      .irs-single:before, .irs-from:before, .irs-to:before {
+        border-top-color: %s !important;
+      }
+      .irs-handle {
+        border-color: %s !important;
+      }
+    ", metadata_chart_color, metadata_chart_color, metadata_chart_color, metadata_chart_color, metadata_chart_color)))
   ),
   
   # always-visible scroll-to-top arrow. Sits outside navbarPage entirely
@@ -228,17 +248,6 @@ tagList(
   tags$head(
     tags$script(src = "https://cdn.jsdelivr.net/npm/openseadragon@4/build/openseadragon/openseadragon.min.js"),
     tags$script(HTML("
-      // navigator.clipboard needs a SECURE CONTEXT (https, or localhost) —
-      // on a plain http:// deployment it doesn't exist at all, and calling
-      // it does nothing with no visible error. Sandboxed webviews (e.g.
-      // RStudio's built-in Viewer pane) can ALSO fail even when the API
-      // exists, because they often can't reach the system clipboard at
-      // all — if that's what's happening here, opening the app in a real
-      // browser tab (not the Viewer pane) should resolve it immediately.
-      //
-      // el is the CLICKED element (pass `this` from onclick) — flashes it
-      // to 'Copied!' briefly so clicking always gives visible confirmation
-      // either way, rather than a silent success-or-failure.
       function copyTextRobust(text, el) {
         function flash() {
           if (!el) return;
@@ -271,6 +280,15 @@ tagList(
           fallback();
         }
       }
+      // QNP Graphs: clicking a plotted point copies its donor id — see
+      // the input$qplot_output_click observer in server.r, which reads
+      // the point's key (mapped from donor in functions.r's plot
+      // builders) and sends it here. No button element to flash
+      // 'Copied!' on for a plot click, so server.r shows a notification
+      // instead.
+      Shiny.addCustomMessageHandler('copyToClipboard', function(message) {
+        copyTextRobust(message.text, null);
+      });
     ")),
     tags$style(HTML("
       /* wider popovers so donor-metadata content (render_donor_metadata_list)
@@ -303,7 +321,7 @@ tagList(
     # =========================================================================
     # home — single donor/region/stain, not a comparison.
     # =========================================================================
-    tabPanel("Home",
+    tabPanel("home",
              sidebarLayout(
                sidebarPanel(
                  width = 4,
@@ -340,11 +358,11 @@ tagList(
              )
     ),
     
-    navbarMenu("Comparisons",
+    navbarMenu("comparisons",
                # =========================================================================
                # compare stains — constraints: single donor, single region. varies: stain.
                # =========================================================================
-               tabPanel("Compare Stains",
+               tabPanel("compare stains",
                         sidebarLayout(
                           sidebarPanel(
                             width = 4,
@@ -384,7 +402,7 @@ tagList(
                # =========================================================================
                # compare donors — constraints: single stain, single region. varies: donor.
                # =========================================================================
-               tabPanel("Compare Donors",
+               tabPanel("compare donors",
                         sidebarLayout(
                           sidebarPanel(
                             width = 4,
@@ -454,7 +472,7 @@ tagList(
                # compare regions — constraints: single donor, single stain.
                # varies: region (every region that donor+stain combination has).
                # =========================================================================
-               tabPanel("Compare Regions",
+               tabPanel("compare regions",
                         sidebarLayout(
                           sidebarPanel(
                             width = 4,
@@ -495,9 +513,9 @@ tagList(
     navbarMenu("QNP",
                # =========================================================================
                # identify donors — dedicated page combining demographic, clinical, AND
-               # QNP filters (the only page where QNP shows up now) to find a set of
-               # donors of interest, which can then be pulled into the Compare Donors
-               # page (see its "Use donor set" button) or copied out directly.
+               # QNP filters to find a set of donors of interest, which can then be
+               # pulled into the Compare Donors page (see its "Use donor set" button)
+               # or copied out directly.
                # =========================================================================
                tabPanel(filter_donors_tab_name,
                         sidebarLayout(
@@ -519,6 +537,61 @@ tagList(
                             ),
                             helpText("Click a donor's name for all metadata, including QNP values."),
                             uiOutput("identify_donors_table_ui")
+                          )
+                        )
+               ),
+               
+               # =========================================================================
+               # qnp graphs — boxplots/scatterplots of demographic+clinical fields
+               # against QNP measures. "Compare:" picks whether region is a facet
+               # (every region shown at once) or a fixed single selection. X is a
+               # single field (categorical, CPS, or a QNP measure — age_bucket, a
+               # derived 5-year-binned version of age, counts as categorical too):
+               # categorical gives a boxplot, anything else a scatter — either way,
+               # up to 5 Y-axis QNP measures plot together as one grouped/colored,
+               # hoverable, clickable (copies the donor id) series.
+               # =========================================================================
+               tabPanel(qnp_graph_tab_name,
+                        sidebarLayout(
+                          sidebarPanel(
+                            width = 4,
+                            radioButtons("qplot_compare_mode", "Compare:",
+                                         choices = c("QNP across regions" = "regions", "QNP within one region" = "single"),
+                                         selected = "single"),
+                            conditionalPanel(
+                              condition = "input.qplot_compare_mode == 'single'",
+                              uiOutput("qplot_region_picker_ui")
+                            ),
+                            tags$hr(),
+                            selectInput("qplot_x_field", "X axis", choices = with_placeholder_grouped(qnp_graph_x_choices())),
+                            uiOutput("qplot_y_fields_ui"),
+                            tags$hr(),
+                            bslib::accordion(
+                              bslib::accordion_panel(
+                                title = "Plot customization",
+                                sliderInput("qplot_point_size", "Point size", min = 1, max = 6, value = qnp_graph_point_size, step = 0.5),
+                                sliderInput("qplot_point_alpha", "Point opacity", min = 0.1, max = 1, value = qnp_graph_point_alpha, step = 0.05),
+                                uiOutput("qplot_x_range_ui"),
+                                uiOutput("qplot_y_range_ui")
+                              ),
+                              open = FALSE
+                            ),
+                            tags$hr(),
+                            actionButton("qplot_reset_btn", "Reset", style = sprintf("background-color:%s; border-color:%s; color:#fff;", reset_button_color, reset_button_color))
+                          ),
+                          mainPanel(
+                            width = 8,
+                            # height is dynamic (server.r) rather than fixed here, so a
+                            # multi-row faceted plot gets taller instead of squeezing
+                            # more rows into the same box.
+                            uiOutput("qplot_output_wrapper"),
+                            div(
+                              style = "margin-top:12px;",
+                              downloadButton("qplot_download_btn", "Download plot (.png)", 
+                                             style = sprintf("background-color:%s; border-color:%s; color:#fff;", 
+                                                             action_button_color, action_button_color)),
+                              
+                            )
                           )
                         )
                )

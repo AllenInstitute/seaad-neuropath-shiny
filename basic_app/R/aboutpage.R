@@ -1,14 +1,5 @@
 # =============================================================================
 # R/aboutpage.R
-#
-# The About tab's content lives entirely here, separate from the rest of the
-# app, specifically so it can be edited (contact info, usage notes,
-# acknowledgements, etc.) without touching ui.R/server.R/global.R/functions.R.
-#
-# Shiny automatically sources every .R file in an R/ subdirectory alongside
-# the app before global.R/ui.R/server.R run, so these two functions are
-# already available by the time ui.R and server.R need them — no explicit
-# source() call required.
 # =============================================================================
 
 # Returns the About tabPanel. Called once from ui.R, inside navbarPage(...).
@@ -19,7 +10,7 @@ about_tab_ui <- function() {
              h4("Usage"),
              p("Pick a donor, region, and stain on the Home tab to view a single slide, ",
                "or use one of the Compare tabs to view several images side by side. ",
-               "Annotation checkboxes only fetch their underlying file the first time they're switched on."),
+               "Donors can be filtered by QNP under the QNP tab and IDs copied to the scratchpad for further visualization."),
              
              h4("Relevant Publications"),
              p("See: ", a("https://brain-map.org/consortia/sea-ad/our-science", href="https://brain-map.org/consortia/sea-ad/our-science", target = "_blank")),
@@ -30,12 +21,12 @@ about_tab_ui <- function() {
                a("(Kana et al., bioRxiv, 2026)", href = "https://www.biorxiv.org/content/10.64898/2026.01.10.694705v2", target = "_blank")),
              
              h4("Acknowledgements"),
-             p("App developed by Irika R. Sinha. Claude Sonnet 5 and OpenAI GPT-5.6 Sol were used to develop and troubleshoot code."),
+             p("App developed by Irika R. Sinha. Claude Sonnet 5 and OpenAI GPT-5.6 Sol used in development."),
              p("More information on the SEA-AD project can be found on the ",
                tags$a(href = "https://sea-ad.org/", "SEA-AD homepage.", target = "_blank")),
              
-             h4("Specimen metadata"),
-             downloadButton("about_download_metadata", "Download specimen metadata CSV", style = sprintf("background-color:%s; border-color:%s; color:#fff;", action_button_color, action_button_color)),
+             h4("Tissue metadata"),
+             downloadButton("about_download_metadata", "Download tissue specimen metadata CSV", style = sprintf("background-color:%s; border-color:%s; color:#fff;", action_button_color, action_button_color)),
              br(),
              tags$img(
                src = "SEA-AD_Alternate-Renewal2.png",
