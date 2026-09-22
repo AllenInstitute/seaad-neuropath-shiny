@@ -576,6 +576,29 @@ function(input, output, session) {
     selectInput("qplot_region_sel", "Region", choices = with_placeholder(regions))
   })
   
+  # whether the x/y axis pickers should be usable at all — always true in
+  # "regions" (facet) mode, but in "single" mode not until a region is
+  # actually chosen (picking axes before that would let the y-axis
+  # picker's own region-filtered choices — see qplot_y_fields_ui below —
+  # change out from under a selection already made).
+  qplot_region_ready <- reactive({
+    if (!identical(input$qplot_compare_mode, "single")) return(TRUE)
+    is_selected(input$qplot_grouping_sel) && is_selected(input$qplot_region_sel)
+  })
+  
+  observe({
+    shinyjs::toggleState("qplot_x_field", condition = qplot_region_ready())
+  })
+  
+  # changing the region (in single mode) can invalidate a prior x/y
+  # choice outright (the y-axis picker's own choices are narrowed to
+  # that region — see below), so both reset rather than silently
+  # carrying over a selection that may no longer make sense.
+  observeEvent(input$qplot_region_sel, {
+    updateSelectInput(session, "qplot_x_field", selected = "")
+    updateSelectizeInput(session, "qplot_y_fields", selected = character(0))
+  }, ignoreInit = TRUE)
+  
   qplot_data <- reactive({
     req(identical(input$main_nav, qnp_graph_tab_name))
     build_qplot_data_from_inputs(input)
@@ -587,18 +610,39 @@ function(input, output, session) {
     build_qplot_from_inputs(input, data)
   })
   
+  # taller for a faceted multi-row plot (3 per row — see facet_wrap(ncol=3)
+  # in functions.r) rather than a fixed height that would otherwise
+  # squeeze every row into the same box regardless of how many there are.
+  # Single-region mode (one panel) just gets a plain default.
+  qplot_plot_height <- reactive({
+    if (!identical(input$qplot_compare_mode, "regions")) return(550)
+    data <- qplot_data()
+    n_regions <- if (!is.null(data)) length(unique(data$region)) else 1
+    n_rows <- ceiling(max(n_regions, 1) / 3)
+    max(550, 300 * n_rows + 150)
+  })
+  
+  output$qplot_output_wrapper <- renderUI({
+    plotly::plotlyOutput("qplot_output", height = paste0(qplot_plot_height(), "px"))
+  })
+  
   # Y-axis measure picker — region, if given (single-region mode with a
   # region actually chosen), narrows the choices to measures that
   # actually have data there, so it never offers a dead-end pick. Rebuilt
   # whenever the region changes; any no-longer-valid selection is simply
   # dropped (matching how other cascading selectors on this page behave).
+  # Disabled (shinyjs::disabled(), baked into the widget itself rather
+  # than toggled after the fact) until qplot_region_ready() — selectize
+  # respects a disabled underlying <select> at initialization, so this
+  # doesn't need a separate toggleState() observer racing the rebuild.
   output$qplot_y_fields_ui <- renderUI({
     region <- if (identical(input$qplot_compare_mode, "single") && is_selected(input$qplot_region_sel)) input$qplot_region_sel else NULL
-    selectizeInput(
+    widget <- selectizeInput(
       "qplot_y_fields", sprintf("Y axis (up to %d QNP measures)", qnp_graph_color_cap),
       choices = qnp_graph_field_choices_by_stain(region), multiple = TRUE,
       options = list(maxItems = qnp_graph_color_cap, plugins = list("remove_button"))
     )
+    if (qplot_region_ready()) widget else shinyjs::disabled(widget)
   })
   
   # custom-range controls — bounds/default computed from whatever's
@@ -648,20 +692,39 @@ function(input, output, session) {
   # their jittered points DO dodge correctly. The legend's own y position
   # is pushed further down (plotly's native layout, not just the ggplot2
   # theme's legend.box.spacing) since ggplotly() doesn't always preserve
-  # that theme spacing faithfully. suppressWarnings() is for one
-  # specific, expected warning — "Ignoring unknown aesthetics: text and
-  # key" — since ggplot2 itself doesn't recognize plotly's own text/key
-  # aesthetics; harmless. PNG export is plotly's own toolbar (camera
-  # icon), not a separate download button — no ggsave() path needed here.
+  # that theme spacing faithfully. Fonts are set the same way, for the
+  # same reason: ggplotly() doesn't reliably carry over the ggplot2
+  # theme's axis.text/axis.title font family, so plotly's own layout
+  # fonts are set explicitly instead — this is also what makes an
+  # exported PNG (plotly's own toolbar, not a separate download button)
+  # match the on-screen fonts, since both are rendered by the browser
+  # from these same layout settings, not by R's graphics device. The
+  # browser resolves "AllenTextLight"/"AllenHeadlineBold" via the same
+  # @font-face rules ui.r's CSS already declares for the rest of the app.
+  # config()'s toImageButtonOptions raises that export's own resolution
+  # (2x scale over a 1600x1000 base) above plotly's own, fairly low-res
+  # default. (The "Ignoring unknown aesthetics: text/key" warning from
+  # plotly's own text/key aesthetics is suppressed where the plot is
+  # actually built — build_qnp_grouped_boxplot()/build_qnp_multi_scatter(),
+  # functions.r — not here, since it fires at construction time, before
+  # this block ever sees the plot.)
   output$qplot_output <- plotly::renderPlotly({
     data <- qplot_data()
     shiny::validate(shiny::need(!is.null(data), "Select the required fields above to see a plot."))
     shiny::validate(shiny::need(nrow(data) > 0, "No QNP data available for this selection."))
     p <- qplot_object()
     shiny::validate(shiny::need(!is.null(p), "Select the required fields above to see a plot."))
-    pl <- suppressWarnings(plotly::ggplotly(p, tooltip = "text", source = "qplot_output"))
+    pl <- plotly::ggplotly(p, tooltip = "text", source = "qplot_output")
     pl <- plotly::event_register(pl, "plotly_click")
-    plotly::layout(pl, boxmode = "group", legend = list(y = -0.35, yanchor = "top"))
+    pl <- plotly::layout(
+      pl,
+      boxmode = "group",
+      legend = list(y = -0.35, yanchor = "top", font = list(family = qnp_graph_axis_font)),
+      font   = list(family = qnp_graph_axis_font),
+      xaxis  = list(tickfont = list(family = qnp_graph_axis_font), title = list(font = list(family = qnp_graph_title_font))),
+      yaxis  = list(tickfont = list(family = qnp_graph_axis_font), title = list(font = list(family = qnp_graph_title_font)))
+    )
+    plotly::config(pl, toImageButtonOptions = list(format = "png", filename = "qnp_graph", width = 1600, height = 1000, scale = 2))
   })
   
   # clicking a plotted point copies its donor id. The point's `key` aes
@@ -686,7 +749,9 @@ function(input, output, session) {
     updateSelectInput(session, "qplot_grouping_sel", selected = "")
     updateSelectInput(session, "qplot_region_sel", selected = "")
     updateSelectInput(session, "qplot_x_field", selected = "")
+    updateSelectizeInput(session, "qplot_y_fields", selected = character(0))
     updateSliderInput(session, "qplot_point_size", value = qnp_graph_point_size)
+    updateSliderInput(session, "qplot_point_alpha", value = qnp_graph_point_alpha)
     showNotification(msg_page_reset, type = "message")
   })
   

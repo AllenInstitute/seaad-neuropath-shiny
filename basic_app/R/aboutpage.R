@@ -10,7 +10,7 @@ about_tab_ui <- function() {
              h4("Usage"),
              p("Pick a donor, region, and stain on the Home tab to view a single slide, ",
                "or use one of the Compare tabs to view several images side by side. ",
-               "Annotation checkboxes only fetch their underlying file the first time they're switched on."),
+               "Donors can be filtered by QNP under the QNP tab and IDs copied to the scratchpad for further visualization."),
              
              h4("Relevant Publications"),
              p("See: ", a("https://brain-map.org/consortia/sea-ad/our-science", href="https://brain-map.org/consortia/sea-ad/our-science", target = "_blank")),
@@ -25,8 +25,8 @@ about_tab_ui <- function() {
              p("More information on the SEA-AD project can be found on the ",
                tags$a(href = "https://sea-ad.org/", "SEA-AD homepage.", target = "_blank")),
              
-             h4("Specimen metadata"),
-             downloadButton("about_download_metadata", "Download specimen metadata CSV", style = sprintf("background-color:%s; border-color:%s; color:#fff;", action_button_color, action_button_color)),
+             h4("Tissue metadata"),
+             downloadButton("about_download_metadata", "Download tissue specimen metadata CSV", style = sprintf("background-color:%s; border-color:%s; color:#fff;", action_button_color, action_button_color)),
              br(),
              tags$img(
                src = "SEA-AD_Alternate-Renewal2.png",

@@ -570,6 +570,7 @@ tagList(
                               bslib::accordion_panel(
                                 title = "Plot customization",
                                 sliderInput("qplot_point_size", "Point size", min = 1, max = 6, value = qnp_graph_point_size, step = 0.5),
+                                sliderInput("qplot_point_alpha", "Point opacity", min = 0.1, max = 1, value = qnp_graph_point_alpha, step = 0.05),
                                 uiOutput("qplot_x_range_ui"),
                                 uiOutput("qplot_y_range_ui")
                               ),
@@ -582,8 +583,10 @@ tagList(
                             width = 8,
                             # no separate download button here — plotly's own toolbar
                             # (top-right of the plot) already has a "Download plot as
-                            # png" camera icon.
-                            plotly::plotlyOutput("qplot_output", height = "600px")
+                            # png" camera icon. height is dynamic (server.r) rather
+                            # than fixed here, so a multi-row faceted plot gets taller
+                            # instead of squeezing more rows into the same box.
+                            uiOutput("qplot_output_wrapper")
                           )
                         )
                )
