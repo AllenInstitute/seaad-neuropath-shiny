@@ -155,7 +155,11 @@ function(input, output, session) {
   }, ignoreInit = TRUE)
   
   output$home_annotation_ui <- renderUI({ render_annotation_master_ui(home_entries_rv(), id_prefix = "home") })
-  output$home_viewer_grid   <- renderUI({ render_viewer_grid_ui(home_entries_rv(), label_field = "stain") })
+  output$home_viewer_grid   <- renderUI({ render_viewer_grid_ui(home_entries_rv(), label_field = "stain", show_comparison = TRUE, id_prefix = "home") })
+  
+  observe({
+    register_comparison_density_plots(output, "home", home_entries_rv())
+  })
   
   output$home_context_card <- renderUI({
     entries <- home_entries_rv()
@@ -230,7 +234,15 @@ function(input, output, session) {
   })
   
   output$dstain_annotation_ui <- renderUI({ render_annotation_master_ui(dstain_entries_rv(), id_prefix = "dstain", varying_field = "stain") })
-  output$dstain_viewer_grid   <- renderUI({ render_viewer_grid_ui(dstain_entries_rv(), label_field = "stain", donor_info_style = "qnp_only", qnp_icon = "file-earmark-bar-graph", qnp_all_fields = TRUE) })
+  output$dstain_viewer_grid   <- renderUI({ render_viewer_grid_ui(dstain_entries_rv(), label_field = "stain", donor_info_style = "qnp_only", qnp_icon = "file-earmark-bar-graph", show_comparison = TRUE, id_prefix = "dstain") })
+  
+  # (re)registers each tile's density-plot outputs every time the loaded
+  # entries change — unlike register_metadata_histograms()'s fixed,
+  # startup-time field set, which output ids exist here depends entirely
+  # on which stains are actually loaded right now.
+  observe({
+    register_comparison_density_plots(output, "dstain", dstain_entries_rv())
+  })
   
   observeEvent(input$dstain_load_btn, {
     req(input$dstain_donor, input$dstain_region, length(input$dstain_stains) > 0,
@@ -392,7 +404,11 @@ function(input, output, session) {
   })
   
   output$sregion_annotation_ui <- renderUI({ render_annotation_master_ui(sregion_entries_rv(), id_prefix = "sregion", varying_field = "region") })
-  output$sregion_viewer_grid   <- renderUI({ render_viewer_grid_ui(sregion_entries_rv(), label_field = "region", donor_info_style = "qnp_only", qnp_icon = "file-earmark-bar-graph") })
+  output$sregion_viewer_grid   <- renderUI({ render_viewer_grid_ui(sregion_entries_rv(), label_field = "region", donor_info_style = "qnp_only", qnp_icon = "file-earmark-bar-graph", show_comparison = TRUE, id_prefix = "sregion") })
+  
+  observe({
+    register_comparison_density_plots(output, "sregion", sregion_entries_rv())
+  })
   
   observeEvent(input$sregion_load_btn, {
     req(input$sregion_donor, input$sregion_stain, length(input$sregion_regions) > 0,
@@ -486,11 +502,10 @@ function(input, output, session) {
     region <- if (!is.null(info$region) && nzchar(info$region)) info$region else NULL
     stain  <- if (!is.null(info$stain)  && nzchar(info$stain))  info$stain  else NULL
     mode <- info$mode %||% "combined"
-    all_fields <- isTRUE(info$allFields)
     
     content <- switch(mode,
                       "demo" = render_donor_demo_clinical(info$donor),
-                      "qnp"  = render_donor_metadata_qnp_block(info$donor, region, stain, standalone = TRUE, all_fields = all_fields),
+                      "qnp"  = render_donor_metadata_qnp_block(info$donor, region, stain, standalone = TRUE),
                       render_donor_metadata_list(info$donor, image_region = region, image_stain = stain)
     )
     title_suffix <- switch(mode, "demo" = " — demographic & clinical", "qnp" = " — QNP", "")
@@ -690,8 +705,9 @@ function(input, output, session) {
   # dodged geom_boxplot's own position correctly on its own, so without
   # this every measure's boxes stack on top of each other even though
   # their jittered points DO dodge correctly. The legend's own y position
-  # is pushed further down (plotly's native layout, not just the ggplot2
-  # theme's legend.box.spacing) since ggplotly() doesn't always preserve
+  # is computed from the plot's actual height, not a fixed value (see
+  # legend_y below) — plotly's native layout, not just the ggplot2
+  # theme's legend.box.spacing, since ggplotly() doesn't always preserve
   # that theme spacing faithfully. Fonts are set the same way, for the
   # same reason: ggplotly() doesn't reliably carry over the ggplot2
   # theme's axis.text/axis.title font family, so plotly's own layout
@@ -716,10 +732,16 @@ function(input, output, session) {
     shiny::validate(shiny::need(!is.null(p), "Select the required fields above to see a plot."))
     pl <- plotly::ggplotly(p, tooltip = "text", source = "qplot_output")
     pl <- plotly::event_register(pl, "plotly_click")
+    # plotly's legend y is a FRACTION of the plot's own total height, so a
+    # fixed value reads as a much bigger absolute gap once faceting makes
+    # the plot taller (qplot_plot_height(), dynamic) — a constant pixel
+    # gap divided by that height keeps the actual on-screen gap the same
+    # regardless of how many facet rows there are.
+    legend_y <- -12 / qplot_plot_height()
     pl <- plotly::layout(
       pl,
       boxmode = "group",
-      legend = list(y = -0.35, yanchor = "top", font = list(family = qnp_graph_axis_font)),
+      legend = list(y = legend_y, yanchor = "top", font = list(family = qnp_graph_axis_font)),
       font   = list(family = qnp_graph_axis_font),
       xaxis  = list(tickfont = list(family = qnp_graph_axis_font), title = list(font = list(family = qnp_graph_title_font))),
       yaxis  = list(tickfont = list(family = qnp_graph_axis_font), title = list(font = list(family = qnp_graph_title_font)))
