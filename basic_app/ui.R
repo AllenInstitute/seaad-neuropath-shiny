@@ -7,6 +7,8 @@ tagList(
   useShinyjs(),
   
   tags$head(
+    # favicon_path (global.r) — add that file to www/.
+    tags$link(rel = "icon", type = "image/png", href = favicon_path),
     tags$style(HTML(sprintf("
       @font-face {
         font-family: 'AllenHeadline';

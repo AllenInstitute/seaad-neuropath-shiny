@@ -293,6 +293,9 @@ lbl_brand_secondary   <- "neuropathology viewer"
 lbl_scratchpad        <- "Scratchpad"
 lbl_reset_image_zoom  <- "Reset image zoom"
 
+# favicon
+favicon_path <- "AI_lens_blue.png"
+
 hdg_annotations <- "annotations"
 hdg_shared      <- "shared"
 hdg_qnp         <- "QNP"
