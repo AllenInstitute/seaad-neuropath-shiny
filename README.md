@@ -7,7 +7,7 @@ RShiny app to visualize neuropathology images
 2. Clone the repository from GitHub or download the source code from the [release page](https://github.com/AllenInstitute/seaad-neuropath-shiny/releases/tag/v0.2.0).
 
 ```sh
-git clone --branch v0.2.0 --depth 1 git@github.com:AllenInstitute/seaad-neuropath-shiny.git
+git clone --branch v0.3.0 --depth 1 git@github.com:AllenInstitute/seaad-neuropath-shiny.git
 ```
 
 Run the app in RStudio / using R. 
@@ -25,7 +25,7 @@ shiny::runApp("./basic_app")
 - RShiny host
 
 ## Version information
-- **Currently stable:** v0.2.0 (local)
+- **Currently stable:** v0.3.0 (local, molgen-shiny.org)
 
 #### 260918 Image Preview
 <img height="100" alt="Screenshot 2026-09-18 at 6 47 11 PM" src="https://github.com/user-attachments/assets/d5f59e1e-d3f4-4238-b743-7a8b75a0593b" />
@@ -36,5 +36,6 @@ shiny::runApp("./basic_app")
 <img height="100" alt="Screenshot 2026-09-18 at 6 49 06 PM" src="https://github.com/user-attachments/assets/0a92e288-8eb5-4e26-aa00-3da677ab7ed5" />
 <img height="100" alt="Screenshot 2026-09-18 at 6 49 41 PM" src="https://github.com/user-attachments/assets/4e5a5a69-c51c-4c96-81f9-a13ea8a8da51" />
 
+<img height="100" alt="Screenshot 2026-09-22 at 12 27 49 PM" src="https://github.com/user-attachments/assets/4fdbde2c-2a25-4442-a404-69b571e37eff" />
 
 
