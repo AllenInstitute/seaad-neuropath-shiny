@@ -1478,24 +1478,22 @@ register_metadata_histograms <- function(output, prefix, data) {
 # region/stain may be NULL (e.g. Compare Regions, where region varies per
 # image) — render_donor_metadata_qnp_block() treats NULL as "omit the QNP
 # section", so passing NULL is how that section gets skipped.
-#
-# qnp_all_fields travels through as allFields: it tells the QNP block to
-# show every field regardless of this stain's own crosswalk group (used
-# by Compare Stains), while stain itself still reaches the popup so its
-# header can name which stain the card belongs to.
-donor_info_trigger <- function(donor_id, region = NULL, stain = NULL, mode = "combined", icon = "person-vcard", qnp_all_fields = FALSE) {
+# region/stain may be NULL (e.g. Compare Regions, where region varies per
+# image) — render_donor_metadata_qnp_block() treats NULL as "omit the QNP
+# section", so passing NULL is how that section gets skipped.
+donor_info_trigger <- function(donor_id, region = NULL, stain = NULL, mode = "combined", icon = "person-vcard") {
   shiny::tags$span(
     bsicons::bs_icon(icon),
     style = sprintf("color:%s; cursor:pointer; margin-left:6px;", icon_color),
     title = paste("Donor", donor_id),
     onclick = sprintf(
-      "Shiny.setInputValue('donor_info_click', {donor: '%s', region: '%s', stain: '%s', mode: '%s', allFields: %s}, {priority: 'event'})",
-      donor_id, region %||% "", stain %||% "", mode, if (isTRUE(qnp_all_fields)) "true" else "false"
+      "Shiny.setInputValue('donor_info_click', {donor: '%s', region: '%s', stain: '%s', mode: '%s'}, {priority: 'event'})",
+      donor_id, region %||% "", stain %||% "", mode
     )
   )
 }
 
-render_viewer_grid_ui <- function(entries, label_field = c("stain", "donor", "region"), donor_info_style = c("none", "demo_only", "qnp_only", "split", "combined"), qnp_icon = "file-earmark-bar-graph", qnp_all_fields = FALSE) {
+render_viewer_grid_ui <- function(entries, label_field = c("stain", "donor", "region"), donor_info_style = c("none", "demo_only", "qnp_only", "split", "combined"), qnp_icon = "file-earmark-bar-graph", show_comparison = FALSE, id_prefix = NULL) {
   label_field <- match.arg(label_field)
   donor_info_style <- match.arg(donor_info_style)
   if (length(entries) == 0) return(NULL)  # blank until something is actually loaded
@@ -1507,11 +1505,11 @@ render_viewer_grid_ui <- function(entries, label_field = c("stain", "donor", "re
     triggers <- switch(donor_info_style,
                        "none"      = NULL,
                        "demo_only" = donor_info_trigger(e$donor, mode = "demo", icon = "person-vcard"),
-                       "qnp_only"  = donor_info_trigger(e$donor, e$region, e$stain, mode = "qnp", icon = qnp_icon, qnp_all_fields = qnp_all_fields),
+                       "qnp_only"  = donor_info_trigger(e$donor, e$region, e$stain, mode = "qnp", icon = qnp_icon),
                        "combined"  = donor_info_trigger(e$donor, e$region, e$stain, mode = "combined", icon = "person-vcard"),
                        "split"     = shiny::tagList(
                          donor_info_trigger(e$donor, mode = "demo", icon = "person-vcard"),
-                         donor_info_trigger(e$donor, e$region, e$stain, mode = "qnp", icon = qnp_icon, qnp_all_fields = qnp_all_fields)
+                         donor_info_trigger(e$donor, e$region, e$stain, mode = "qnp", icon = qnp_icon)
                        )
     )
     heading <- if (is.null(triggers)) {
@@ -1524,6 +1522,11 @@ render_viewer_grid_ui <- function(entries, label_field = c("stain", "donor", "re
       )
     }
     
+    # Home, Compare Stains, or Compare Regions (build_stain_comparison_ui()
+    # itself already returns NULL for a stain with no crosswalk-mapped
+    # percent fields).
+    comparison_ui <- if (show_comparison) build_stain_comparison_ui(id_prefix, e$donor, e$region, e$stain) else NULL
+    
     shiny::column(
       width = col_width,
       heading,
@@ -1531,6 +1534,7 @@ render_viewer_grid_ui <- function(entries, label_field = c("stain", "donor", "re
         id = cid,
         style = "width:100%; height:450px; background:#000; border:1px solid #ccc; position:relative; margin-bottom:6px;"
       ),
+      comparison_ui,
       shiny::tags$hr()
     )
   })))
@@ -1705,7 +1709,7 @@ render_donor_metadata_list <- function(donor_id, image_region = NULL, image_stai
 # being viewed on Compare Donors (crosswalked via qnp_region_crosswalk /
 # qnp_stain_crosswalk, global.r) — every measure (qnp_fields_all, not just
 # percent-type), across every layer/subregion in that region.
-render_donor_metadata_qnp_block <- function(donor_id, image_region, image_stain = NULL, standalone = FALSE, all_fields = FALSE) {
+render_donor_metadata_qnp_block <- function(donor_id, image_region, image_stain = NULL, standalone = FALSE) {
   # divider only makes sense when this block follows something else (the
   # combined view, where it separates demo/clinical from QNP) — shown on
   # its own (Compare Stains'/Compare Regions' QNP-only trigger), there's
@@ -1738,10 +1742,12 @@ render_donor_metadata_qnp_block <- function(donor_id, image_region, image_stain 
     ))
   }
   
-  # all_fields (Compare Stains) shows every stain group's fields for this
-  # region rather than narrowing to one — a genuinely-given-but-unmapped
-  # stain still surfaces as a real crosswalk gap when all_fields is off.
-  fields <- if (all_fields || is.null(image_stain)) {
+  # stain unknown (e.g. Compare Regions, where stain is fixed but this
+  # arg is only NULL if the caller doesn't have one) shows every stain
+  # group's fields for this region; otherwise narrowed to just that
+  # stain's own crosswalk-matched fields, so each card only shows what's
+  # actually relevant to the image it was opened from.
+  fields <- if (is.null(image_stain)) {
     qnp_fields_all
   } else {
     stain_groups <- qnp_stain_crosswalk[[image_stain]]
@@ -1786,6 +1792,106 @@ render_donor_metadata_qnp_block <- function(donor_id, image_region, image_stain 
       )
     }))
   )
+}
+
+# =============================================================================
+# "Comparison to other donors" accordion — for one image tile (Home,
+# Compare Stains, or Compare Regions), a density plot per percent-type
+# QNP measure relevant to that tile's own stain, showing every donor's
+# Global (region-level) value with a dashed "selected donor" line marking
+# where the currently-viewed donor falls. Collapsed by default; expandable
+# per tile. id_prefix keeps output ids unique across pages, the same
+# reason render_annotation_master_ui()'s id_prefix exists — all three
+# pages' tiles can coexist in the DOM (navbarPage renders every tab up
+# front) with the very same donor+region+stain loaded at once.
+# =============================================================================
+
+# the percent-only QNP fields (qnp_fields, already narrowed to pct_*) —
+# not qnp_fields_all — relevant to a given image stain, via
+# qnp_stain_crosswalk (global.r).
+qnp_percent_fields_for_stain <- function(stain) {
+  stain_groups <- qnp_stain_crosswalk[[stain]]
+  if (is.null(stain_groups)) return(list())
+  Filter(function(f) f$stain_group %in% stain_groups, qnp_fields)
+}
+
+# density plot of one field's Global value across every donor, with a
+# dashed line (labeled "selected donor" via the legend, rather than an
+# annotation that would need repositioning per plot's own data range) at
+# the given donor's own value. region is the manifest's own naming,
+# crosswalked to its QNP region code(s) the same way
+# render_donor_metadata_qnp_block() does — pooled together (mean per
+# donor) when more than one, e.g. MEC-HIP covering both MEC and HIP.
+# NULL when there's a crosswalk gap, too little data to plot, or the
+# donor themselves has no value for this field.
+build_stain_comparison_density <- function(donor_id, region, field) {
+  qnp_regions <- qnp_region_crosswalk[[region]]
+  if (is.null(qnp_regions)) return(NULL)
+  
+  vals <- do.call(rbind, lapply(qnp_regions, function(r) identify_qnp_field_values(r, qnp_region_level_key(r), field$id)))
+  vals <- stats::aggregate(value ~ donor, data = vals, FUN = mean)
+  if (nrow(vals) < 2) return(NULL)
+  
+  donor_val <- vals$value[vals$donor == donor_id]
+  if (length(donor_val) == 0) return(NULL)
+  
+  ggplot2::ggplot(vals, ggplot2::aes(x = value)) +
+    ggplot2::geom_density(fill = metadata_chart_color, alpha = 0.25, color = metadata_chart_color) +
+    ggplot2::geom_vline(ggplot2::aes(xintercept = donor_val[1], linetype = "selected donor"), color = action_button_color, linewidth = 1) +
+    ggplot2::scale_linetype_manual(name = NULL, values = c("selected donor" = "dashed")) +
+    ggplot2::labs(title = field$label, x = NULL, y = NULL) +
+    ggplot2::theme_classic(base_size = 12) +
+    ggplot2::theme(legend.position = "bottom") +
+    qnp_graph_font_theme()
+}
+
+# a stable, unique output id for one tile's one field's density plot — a
+# function (not pasted inline) so build_stain_comparison_ui() (the
+# placeholder) and register_comparison_density_plots() (the renderPlot
+# behind it, server.r) can't drift apart.
+comparison_density_output_id <- function(id_prefix, donor_id, region, stain, field_id) {
+  paste0(id_prefix, "_density_", gsub("[^A-Za-z0-9]+", "_", paste(donor_id, region, stain, field_id, sep = "_")))
+}
+
+# the expandable "Comparison to other donors" accordion for one tile —
+# NULL (no accordion at all) when that stain has no percent fields
+# mapped via qnp_stain_crosswalk.
+build_stain_comparison_ui <- function(id_prefix, donor_id, region, stain) {
+  fields <- qnp_percent_fields_for_stain(stain)
+  if (length(fields) == 0) return(NULL)
+  
+  plot_outputs <- lapply(fields, function(f) {
+    shiny::plotOutput(comparison_density_output_id(id_prefix, donor_id, region, stain, f$id), height = "220px")
+  })
+  
+  bslib::accordion(
+    bslib::accordion_panel(title = "Comparison to other donors", shiny::tagList(plot_outputs)),
+    open = FALSE
+  )
+}
+
+# registers one renderPlot per (loaded entry, that entry's relevant
+# percent field) for one page — called from an observer (server.r) that
+# re-runs it whenever that page's own loaded entries change, since
+# (unlike register_metadata_histograms()'s fixed, startup-time field set)
+# which output ids exist here depends entirely on what's actually loaded
+# right now.
+register_comparison_density_plots <- function(output, id_prefix, entries) {
+  for (e in entries) {
+    fields <- qnp_percent_fields_for_stain(e$stain)
+    for (f in fields) {
+      local({
+        donor_id <- e$donor
+        region <- e$region
+        fld <- f
+        output[[comparison_density_output_id(id_prefix, e$donor, e$region, e$stain, f$id)]] <- shiny::renderPlot({
+          p <- build_stain_comparison_density(donor_id, region, fld)
+          shiny::validate(shiny::need(!is.null(p), "No comparison data available."))
+          p
+        })
+      })
+    }
+  }
 }
 
 # =============================================================================
@@ -1928,12 +2034,12 @@ qnp_graph_facet_theme <- function() {
   )
 }
 
-# bottom-placed legend shared by both plot builders, with extra space
-# above it so it doesn't crowd the x-axis title directly above it.
+# bottom-placed legend shared by both plot builders, close to the axis
+# beneath it.
 qnp_graph_legend_theme <- function() {
   ggplot2::theme(
     legend.position    = "bottom",
-    legend.box.spacing = ggplot2::unit(20, "pt")
+    legend.box.spacing = ggplot2::unit(2, "pt")
   )
 }
 
