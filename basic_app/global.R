@@ -339,11 +339,13 @@ qnp_graph_cps_field <- "cps"
 # well beyond a handful of series.
 qnp_graph_color_cap <- 5
 
-# shared sizing for both plot builders (build_qnp_grouped_boxplot(),
+# shared sizing/opacity for both plot builders (build_qnp_grouped_boxplot(),
 # build_qnp_multi_scatter()) — one place so the two can't drift apart if
 # ever tuned separately.
 qnp_graph_base_text_size <- 18
 qnp_graph_point_size <- 2.5
+qnp_graph_fill_alpha  <- 0.15  # boxplot fill
+qnp_graph_point_alpha <- 0.55  # points, both plot types
 
 # precomputed ONCE per page prefix at startup, not per click/session —
 # everything it's built from is static once the CSVs above are loaded.

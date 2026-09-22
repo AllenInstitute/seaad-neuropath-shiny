@@ -638,21 +638,21 @@ function(input, output, session) {
     sliderInput("qplot_y_range", "Y range", min = b$min, max = b$max, value = b$default, step = b$step)
   })
   
-  # plotly wrapping is display-only — the download handler below ggsave()s
-  # the plain ggplot object from qplot_object(), never this. source names
-  # this plot for the click observer below (event_data() needs it to
-  # target this specific widget); event_register() (right after ggplotly(),
-  # before any further modification) is what makes plotly actually emit
-  # plotly_click events for it. boxmode="group" fixes a real plotly
-  # limitation: ggplotly() doesn't translate a dodged geom_boxplot's own
-  # position correctly on its own, so without this every measure's boxes
-  # stack on top of each other even though their jittered points DO dodge
-  # correctly. The legend's own y position is pushed further down
-  # (plotly's native layout, not just the ggplot2 theme's legend.box.spacing)
-  # since ggplotly() doesn't always preserve that theme spacing faithfully.
-  # suppressWarnings() is for one specific, expected warning — "Ignoring
-  # unknown aesthetics: text and key" — since ggplot2 itself doesn't
-  # recognize plotly's own text/key aesthetics; harmless.
+  # source names this plot for the click observer below (event_data()
+  # needs it to target this specific widget); event_register() (right
+  # after ggplotly(), before any further modification) is what makes
+  # plotly actually emit plotly_click events for it. boxmode="group"
+  # fixes a real plotly limitation: ggplotly() doesn't translate a
+  # dodged geom_boxplot's own position correctly on its own, so without
+  # this every measure's boxes stack on top of each other even though
+  # their jittered points DO dodge correctly. The legend's own y position
+  # is pushed further down (plotly's native layout, not just the ggplot2
+  # theme's legend.box.spacing) since ggplotly() doesn't always preserve
+  # that theme spacing faithfully. suppressWarnings() is for one
+  # specific, expected warning — "Ignoring unknown aesthetics: text and
+  # key" — since ggplot2 itself doesn't recognize plotly's own text/key
+  # aesthetics; harmless. PNG export is plotly's own toolbar (camera
+  # icon), not a separate download button — no ggsave() path needed here.
   output$qplot_output <- plotly::renderPlotly({
     data <- qplot_data()
     shiny::validate(shiny::need(!is.null(data), "Select the required fields above to see a plot."))
@@ -680,20 +680,6 @@ function(input, output, session) {
     session$sendCustomMessage("copyToClipboard", list(text = d$key))
     showNotification(sprintf("Copied donor id: %s", d$key), type = "message")
   })
-  
-  observe({
-    data <- qplot_data()
-    shinyjs::toggleState("qplot_download_btn", condition = !is.null(data) && nrow(data) > 0)
-  })
-  
-  output$qplot_download_btn <- downloadHandler(
-    filename = function() sprintf("qnp_graph_%s.png", format(Sys.Date(), "%Y%m%d")),
-    content = function(file) {
-      p <- qplot_object()
-      req(!is.null(p))
-      suppressWarnings(ggplot2::ggsave(file, plot = p, width = 12, height = 7, dpi = 150))
-    }
-  )
   
   observeEvent(input$qplot_reset_btn, {
     updateRadioButtons(session, "qplot_compare_mode", selected = "single")

@@ -155,7 +155,27 @@ tagList(
         --bs-table-bg: #fff;
         --bs-table-striped-bg: %s;
       }
-    ", metadata_chart_color, sidebar_divider_color, sidebar_bg_color, sidebar_divider_color, sidebar_divider_color, table_stripe_color)))
+    ", metadata_chart_color, sidebar_divider_color, sidebar_bg_color, sidebar_divider_color, sidebar_divider_color, table_stripe_color))),
+    
+    # every sliderInput app-wide (overlay opacity, donor-count, QNP Graphs'
+    # point-size/Y-range, etc.) — ionRangeSlider's own default blue is
+    # close to but not actually the app's brand color, so it's overridden
+    # here rather than left as a near-miss.
+    tags$style(HTML(sprintf("
+      .irs-bar, .irs-bar-edge {
+        background: %s !important;
+        border-color: %s !important;
+      }
+      .irs-single, .irs-from, .irs-to {
+        background-color: %s !important;
+      }
+      .irs-single:before, .irs-from:before, .irs-to:before {
+        border-top-color: %s !important;
+      }
+      .irs-handle {
+        border-color: %s !important;
+      }
+    ", metadata_chart_color, metadata_chart_color, metadata_chart_color, metadata_chart_color, metadata_chart_color)))
   ),
   
   # always-visible scroll-to-top arrow. Sits outside navbarPage entirely
@@ -545,6 +565,7 @@ tagList(
                             tags$hr(),
                             selectInput("qplot_x_field", "X axis", choices = with_placeholder_grouped(qnp_graph_x_choices())),
                             uiOutput("qplot_y_fields_ui"),
+                            tags$hr(),
                             bslib::accordion(
                               bslib::accordion_panel(
                                 title = "Plot customization",
@@ -559,11 +580,10 @@ tagList(
                           ),
                           mainPanel(
                             width = 8,
-                            plotly::plotlyOutput("qplot_output", height = "600px"),
-                            div(
-                              style = "margin-top:12px;",
-                              downloadButton("qplot_download_btn", "Download plot (.png)", style = sprintf("background-color:%s; border-color:%s; color:#fff;", action_button_color, action_button_color))
-                            )
+                            # no separate download button here — plotly's own toolbar
+                            # (top-right of the plot) already has a "Download plot as
+                            # png" camera icon.
+                            plotly::plotlyOutput("qplot_output", height = "600px")
                           )
                         )
                )
