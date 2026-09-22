@@ -5,6 +5,10 @@ library(httr)
 library(curl)
 library(khroma)
 library(shinyjs)
+library(ggplot2)
+library(plotly)
+library(sysfonts)
+library(showtext)
 
 source("R/functions.R")
 
@@ -43,6 +47,34 @@ specimen_metadata_csv_path <- "ins/SpecimenMetadata.csv"
 
 donor_metadata  <- load_specimen_metadata_csv(specimen_metadata_csv_path)
 metadata_fields <- derive_metadata_fields(metadata_fields, donor_metadata)
+
+# QNP Graphs' derived "age at death, 5-yr bins" categorical field — age
+# itself is continuous, unsuited to a boxplot x-axis. Derived here (not
+# read from a csv column), so it's tracked separately from metadata_fields
+# rather than added as a fake entry there. See compute_age_buckets() in
+# functions.r.
+qnp_graph_age_bucket_field <- "age_bucket"
+qnp_graph_age_bucket_label <- "age at death (5-yr bins)"
+age_buckets <- compute_age_buckets(donor_metadata$age_at_death)
+donor_metadata$age_bucket <- age_buckets$values
+qnp_graph_age_bucket_levels <- age_buckets$levels
+
+# register the app's own custom fonts with R's graphics device too — CSS
+# @font-face (ui.r) only applies to HTML, never to plot images rendered
+# by ggplot2/showtext. Falls back to each theme's plain default font
+# rather than failing the app if the files can't be read this way (e.g.
+# an environment where the installed freetype doesn't support woff2).
+qnp_graph_axis_font  <- "sans-serif"
+qnp_graph_title_font <- "sans-serif"
+tryCatch({
+  sysfonts::font_add(family = "AllenTextLight", regular = "www/fonts/AllenInstituteText-Light.woff2")
+  sysfonts::font_add(family = "AllenHeadlineBold", regular = "www/fonts/AllenInstituteHeadline-Bold.woff2")
+  showtext::showtext_auto()
+  qnp_graph_axis_font  <- "AllenTextLight"
+  qnp_graph_title_font <- "AllenHeadlineBold"
+}, error = function(e) {
+  warning("could not register custom fonts for ggplot2 plots (", e$message, ") — falling back to the default font.")
+})
 
 # manifest source — a single csv covering any number of donors. required
 # columns per row: file_type, stain_type, donor, region, s3_uri.
@@ -274,6 +306,29 @@ qnp_global_sentinel <- "Global"
 # Filter Donors tab's exact title — compared against input$main_nav in
 # server.r, and used by ui.r's tabPanel() itself, so the two can't drift.
 filter_donors_tab_name <- "filter donors"
+
+# same pattern for the QNP Graphs tab.
+qnp_graph_tab_name <- "qnp graphs"
+
+# QNP Graphs page: the demographic/clinical fields offered on the x-axis
+# as a boxplot grouping category — every metadata_fields select-type field,
+# plus the derived age_bucket (age itself, years_education, and cps are
+# continuous, unsuited to a discrete grouping).
+qnp_graph_categorical_fields <- c("sex", "apoe_genotype", "cog_status", "adnc", "thal_phase", "braak_stage", "cerad_score", qnp_graph_age_bucket_field)
+
+# the one numeric clinical field offered as the "CPS vs QNP" scatter's x-axis.
+qnp_graph_cps_field <- "cps"
+
+# cap on how many QNP measures can be plotted on the Y axis at once — each
+# gets its own color, and a scatter's legend/palette stop being readable
+# well beyond a handful of series.
+qnp_graph_color_cap <- 5
+
+# shared sizing for both plot builders (build_qnp_grouped_boxplot(),
+# build_qnp_multi_scatter()) — one place so the two can't drift apart if
+# ever tuned separately.
+qnp_graph_base_text_size <- 18
+qnp_graph_point_size <- 2.5
 
 # precomputed ONCE per page prefix at startup, not per click/session —
 # everything it's built from is static once the CSVs above are loaded.

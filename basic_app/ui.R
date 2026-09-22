@@ -260,6 +260,15 @@ tagList(
           fallback();
         }
       }
+      // QNP Graphs: clicking a plotted point copies its donor id — see
+      // the input$qplot_output_click observer in server.r, which reads
+      // the point's key (mapped from donor in functions.r's plot
+      // builders) and sends it here. No button element to flash
+      // 'Copied!' on for a plot click, so server.r shows a notification
+      // instead.
+      Shiny.addCustomMessageHandler('copyToClipboard', function(message) {
+        copyTextRobust(message.text, null);
+      });
     ")),
     tags$style(HTML("
       /* wider popovers so donor-metadata content (render_donor_metadata_list)
@@ -484,9 +493,9 @@ tagList(
     navbarMenu("QNP",
                # =========================================================================
                # identify donors — dedicated page combining demographic, clinical, AND
-               # QNP filters (the only page where QNP shows up now) to find a set of
-               # donors of interest, which can then be pulled into the Compare Donors
-               # page (see its "Use donor set" button) or copied out directly.
+               # QNP filters to find a set of donors of interest, which can then be
+               # pulled into the Compare Donors page (see its "Use donor set" button)
+               # or copied out directly.
                # =========================================================================
                tabPanel(filter_donors_tab_name,
                         sidebarLayout(
@@ -508,6 +517,61 @@ tagList(
                             ),
                             helpText("Click a donor's name for all metadata, including QNP values."),
                             uiOutput("identify_donors_table_ui")
+                          )
+                        )
+               ),
+               
+               # =========================================================================
+               # qnp graphs — boxplots/scatterplots of demographic+clinical fields
+               # against QNP measures. "Compare:" picks whether region is a facet
+               # (every region shown at once) or a fixed single selection. X is a
+               # single field (categorical, CPS, or a QNP measure — age_bucket, a
+               # derived 5-year-binned version of age, counts as categorical too):
+               # categorical gives a boxplot, anything else a scatter — either way,
+               # up to 5 Y-axis QNP measures plot together as one grouped/colored,
+               # hoverable, clickable (copies the donor id) series.
+               # =========================================================================
+               tabPanel(qnp_graph_tab_name,
+                        sidebarLayout(
+                          sidebarPanel(
+                            width = 4,
+                            radioButtons("qplot_compare_mode", "Compare:",
+                                         choices = c("QNP across regions" = "regions", "QNP within one region" = "single"),
+                                         selected = "single"),
+                            conditionalPanel(
+                              condition = "input.qplot_compare_mode == 'single'",
+                              uiOutput("qplot_region_picker_ui")
+                            ),
+                            tags$hr(),
+                            selectInput("qplot_x_field", "X axis", choices = with_placeholder_grouped(qnp_graph_x_choices())),
+                            selectizeInput(
+                              "qplot_y_fields", sprintf("Y axis (up to %d QNP measures)", qnp_graph_color_cap),
+                              choices = qnp_graph_field_choices_by_stain(), multiple = TRUE,
+                              options = list(maxItems = qnp_graph_color_cap, plugins = list("remove_button"))
+                            ),
+                            tags$hr(),
+                            strong("Custom axis ranges (optional)"),
+                            conditionalPanel(
+                              condition = sprintf("input.qplot_x_field != '' && ['%s'].indexOf(input.qplot_x_field) === -1", paste(qnp_graph_categorical_fields, collapse = "','")),
+                              fluidRow(
+                                column(6, numericInput("qplot_x_min", "X min", value = NA)),
+                                column(6, numericInput("qplot_x_max", "X max", value = NA))
+                              )
+                            ),
+                            fluidRow(
+                              column(6, numericInput("qplot_y_min", "Y min", value = NA)),
+                              column(6, numericInput("qplot_y_max", "Y max", value = NA))
+                            ),
+                            tags$hr(),
+                            actionButton("qplot_reset_btn", "Reset", style = sprintf("background-color:%s; border-color:%s; color:#fff;", reset_button_color, reset_button_color))
+                          ),
+                          mainPanel(
+                            width = 8,
+                            plotly::plotlyOutput("qplot_output", height = "600px"),
+                            div(
+                              style = "margin-top:12px;",
+                              downloadButton("qplot_download_btn", "Download plot (.png)", style = sprintf("background-color:%s; border-color:%s; color:#fff;", action_button_color, action_button_color))
+                            )
                           )
                         )
                )

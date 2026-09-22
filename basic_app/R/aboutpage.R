@@ -21,7 +21,7 @@ about_tab_ui <- function() {
                a("(Kana et al., bioRxiv, 2026)", href = "https://www.biorxiv.org/content/10.64898/2026.01.10.694705v2", target = "_blank")),
              
              h4("Acknowledgements"),
-             p("App developed by Irika R. Sinha. Claude Sonnet 5 and OpenAI GPT-5.6 Sol were used to develop and troubleshoot code."),
+             p("App developed by Irika R. Sinha. Claude Sonnet 5 and OpenAI GPT-5.6 Sol used in development."),
              p("More information on the SEA-AD project can be found on the ",
                tags$a(href = "https://sea-ad.org/", "SEA-AD homepage.", target = "_blank")),
              

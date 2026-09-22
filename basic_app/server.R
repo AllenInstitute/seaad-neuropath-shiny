@@ -554,6 +554,92 @@ function(input, output, session) {
   })
   
   # ===========================================================================
+  # qnp graphs — boxplots/scatterplots of demographic+clinical fields
+  # against QNP measures. See build_qplot_* / build_qnp_graph_data() in
+  # functions.r for the actual data prep and ggplot2 building; this section
+  # is just the reactive wiring around them.
+  # ===========================================================================
+  
+  output$qplot_region_picker_ui <- renderUI({ build_qplot_region_picker() })
+  
+  output$qplot_region_ui <- renderUI({
+    req(is_selected(input$qplot_grouping_sel))
+    regions <- get_qnp_regions_in_grouping(input$qplot_grouping_sel)
+    if (!qnp_grouping_has_multiple_regions(input$qplot_grouping_sel)) {
+      # nothing to disambiguate — still a real selectInput (hidden), so
+      # downstream code reading qplot_region_sel works identically either way.
+      return(tags$div(
+        style = "display:none;",
+        selectInput("qplot_region_sel", NULL, choices = regions, selected = if (length(regions) == 1) regions[1] else NULL)
+      ))
+    }
+    selectInput("qplot_region_sel", "Region", choices = with_placeholder(regions))
+  })
+  
+  qplot_data <- reactive({
+    req(identical(input$main_nav, qnp_graph_tab_name))
+    build_qplot_data_from_inputs(input)
+  })
+  
+  qplot_object <- reactive({
+    data <- qplot_data()
+    req(!is.null(data), nrow(data) > 0)
+    build_qplot_from_inputs(input, data)
+  })
+  
+  # plotly wrapping is display-only — the download handler below ggsave()s
+  # the plain ggplot object from qplot_object(), never this. source names
+  # this plot for the click observer below (event_data() needs it to
+  # target this specific widget).
+  output$qplot_output <- plotly::renderPlotly({
+    data <- qplot_data()
+    shiny::validate(shiny::need(!is.null(data), "Select the required fields above to see a plot."))
+    shiny::validate(shiny::need(nrow(data) > 0, "No QNP data available for this selection."))
+    p <- qplot_object()
+    shiny::validate(shiny::need(!is.null(p), "Select the required fields above to see a plot."))
+    plotly::ggplotly(p, tooltip = "text", source = "qplot_output")
+  })
+  
+  # clicking a plotted point copies its donor id. The point's `key` aes
+  # (mapped from donor in build_qnp_grouped_boxplot()/build_qnp_multi_scatter())
+  # arrives here as customdata via plotly's click event; clicking a
+  # boxplot's box shape itself (no key mapped there) has no key and is a
+  # no-op.
+  observeEvent(plotly::event_data("plotly_click", source = "qplot_output"), {
+    d <- plotly::event_data("plotly_click", source = "qplot_output")
+    req(!is.null(d$key), nzchar(d$key))
+    session$sendCustomMessage("copyToClipboard", list(text = d$key))
+    showNotification(sprintf("Copied donor id: %s", d$key), type = "message")
+  })
+  
+  observe({
+    data <- qplot_data()
+    shinyjs::toggleState("qplot_download_btn", condition = !is.null(data) && nrow(data) > 0)
+  })
+  
+  output$qplot_download_btn <- downloadHandler(
+    filename = function() sprintf("qnp_graph_%s.png", format(Sys.Date(), "%Y%m%d")),
+    content = function(file) {
+      p <- qplot_object()
+      req(!is.null(p))
+      ggplot2::ggsave(file, plot = p, width = 12, height = 7, dpi = 150)
+    }
+  )
+  
+  observeEvent(input$qplot_reset_btn, {
+    updateRadioButtons(session, "qplot_compare_mode", selected = "single")
+    updateSelectInput(session, "qplot_grouping_sel", selected = "")
+    updateSelectInput(session, "qplot_region_sel", selected = "")
+    updateSelectInput(session, "qplot_x_field", selected = "")
+    updateSelectizeInput(session, "qplot_y_fields", selected = character(0))
+    updateNumericInput(session, "qplot_x_min", value = NA)
+    updateNumericInput(session, "qplot_x_max", value = NA)
+    updateNumericInput(session, "qplot_y_min", value = NA)
+    updateNumericInput(session, "qplot_y_max", value = NA)
+    showNotification(msg_page_reset, type = "message")
+  })
+  
+  # ===========================================================================
   # about page — defined in R/aboutpage.R, edited independently of this file.
   # ===========================================================================
   
