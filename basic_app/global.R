@@ -9,6 +9,7 @@ library(ggplot2)
 library(plotly)
 library(sysfonts)
 library(showtext)
+library(scales)
 
 source("R/functions.R")
 

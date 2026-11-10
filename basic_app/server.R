@@ -735,8 +735,12 @@ function(input, output, session) {
     # fixed value reads as a much bigger absolute gap once faceting makes
     # the plot taller (qplot_plot_height(), dynamic) — a constant pixel
     # gap divided by that height keeps the actual on-screen gap the same
-    # regardless of how many facet rows there are.
-    legend_y <- -12 / qplot_plot_height()
+    # regardless of how many facet rows there are. The gap itself has to
+    # clear the axis tick labels AND the axis title (both already sit
+    # just below y=0, the bottom of the plot area) before the legend
+    # starts — too small a gap here sat the legend right on top of them
+    # instead of below them.
+    legend_y <- -55 / qplot_plot_height()
     pl <- plotly::layout(
       pl,
       boxmode = "group",
@@ -794,6 +798,7 @@ function(input, output, session) {
     updateSelectizeInput(session, "qplot_y_fields", selected = character(0))
     updateSliderInput(session, "qplot_point_size", value = qnp_graph_point_size)
     updateSliderInput(session, "qplot_point_alpha", value = qnp_graph_point_alpha)
+    updateCheckboxInput(session, "qplot_log2_y", value = FALSE)
     showNotification(msg_page_reset, type = "message")
   })
   

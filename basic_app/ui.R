@@ -573,6 +573,7 @@ tagList(
                                 title = "Plot customization",
                                 sliderInput("qplot_point_size", "Point size", min = 1, max = 6, value = qnp_graph_point_size, step = 0.5),
                                 sliderInput("qplot_point_alpha", "Point opacity", min = 0.1, max = 1, value = qnp_graph_point_alpha, step = 0.05),
+                                checkboxInput("qplot_log2_y", "Log2 scale Y axis", value = FALSE),
                                 uiOutput("qplot_x_range_ui"),
                                 uiOutput("qplot_y_range_ui")
                               ),

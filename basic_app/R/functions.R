@@ -1835,6 +1835,7 @@ build_stain_comparison_density <- function(donor_id, region, field, show_legend 
   if (is.null(qnp_regions)) return(NULL)
   
   vals <- do.call(rbind, lapply(qnp_regions, function(r) identify_qnp_field_values(r, qnp_region_level_key(r), field$id)))
+  if (is.null(vals) || nrow(vals) == 0) return(NULL)
   vals <- stats::aggregate(value ~ donor, data = vals, FUN = mean)
   if (nrow(vals) < 2) return(NULL)
   
@@ -2016,6 +2017,19 @@ qnp_graph_slider_bounds <- function(vals) {
   list(min = round(rng[1] - pad, 1), max = round(rng[2] + pad, 1), default = round(rng, 1), step = step)
 }
 
+# log2(x + 0.001), used for the QNP Graphs Y axis log2 option — a bare
+# log2 turns an exact 0 (a valid QNP percent value) into -Inf, which
+# crashes ggplot2's own internal axis-break computation (not just a
+# cosmetic warning). The offset keeps every value finite while barely
+# nudging the overall shape.
+qnp_graph_log2_transform <- function() {
+  scales::trans_new(
+    name = "qnp_log2_offset",
+    transform = function(x) log2(x + 0.001),
+    inverse = function(x) 2^x - 0.001
+  )
+}
+
 # shared font styling for every QNP Graphs plot — axis tick labels in the
 # app's own Light body font, axis TITLES in its Bold heading font,
 # matching the rest of the app's two-font system (falls back to each
@@ -2130,7 +2144,7 @@ qnp_graph_color_palette <- function(n) {
 # `choices` (e.g. cerad_score's Absent/Sparse/Moderate/Frequent), or
 # age_bucket's own 5-year bucket order — not alphabetical, so ordinal
 # fields read in their real order.
-build_qnp_grouped_boxplot <- function(long_data, x_field, x_label, facet = FALSE, y_range = NULL, point_size = qnp_graph_point_size, point_alpha = qnp_graph_point_alpha) {
+build_qnp_grouped_boxplot <- function(long_data, x_field, x_label, facet = FALSE, y_range = NULL, point_size = qnp_graph_point_size, point_alpha = qnp_graph_point_alpha, log2_y = FALSE) {
   x_choices <- qnp_graph_categorical_levels(x_field)
   long_data[[x_field]] <- factor(long_data[[x_field]], levels = x_choices)
   long_data <- long_data[!is.na(long_data[[x_field]]) & !is.na(long_data$value), , drop = FALSE]
@@ -2166,6 +2180,7 @@ build_qnp_grouped_boxplot <- function(long_data, x_field, x_label, facet = FALSE
       qnp_graph_facet_theme()
   )
   
+  if (log2_y) p <- p + ggplot2::scale_y_continuous(trans = qnp_graph_log2_transform())
   if (!is.null(y_range)) p <- p + ggplot2::coord_cartesian(ylim = y_range)
   if (facet) p <- p + ggplot2::facet_wrap(~region, ncol = 3, axes = "all_x")
   p
@@ -2179,7 +2194,7 @@ build_qnp_grouped_boxplot <- function(long_data, x_field, x_label, facet = FALSE
 # clip), so a value that falls slightly outside 0-1 still shows rather
 # than getting cut off. x_range/y_range, if given, override the axis
 # range outright (CPS's own 0/1-inclusive behavior included).
-build_qnp_multi_scatter <- function(long_data, x_field, x_label, x_is_cps = FALSE, facet = FALSE, x_range = NULL, y_range = NULL, point_size = qnp_graph_point_size, point_alpha = qnp_graph_point_alpha) {
+build_qnp_multi_scatter <- function(long_data, x_field, x_label, x_is_cps = FALSE, facet = FALSE, x_range = NULL, y_range = NULL, point_size = qnp_graph_point_size, point_alpha = qnp_graph_point_alpha, log2_y = FALSE) {
   long_data <- long_data[!is.na(long_data[[x_field]]) & !is.na(long_data$value), , drop = FALSE]
   if (nrow(long_data) == 0) return(NULL)
   
@@ -2209,6 +2224,8 @@ build_qnp_multi_scatter <- function(long_data, x_field, x_label, x_is_cps = FALS
       qnp_graph_font_theme() +
       qnp_graph_facet_theme()
   )
+  
+  if (log2_y) p <- p + ggplot2::scale_y_continuous(trans = qnp_graph_log2_transform())
   
   final_xlim <- if (!is.null(x_range)) {
     x_range
@@ -2271,13 +2288,14 @@ build_qplot_from_inputs <- function(input, data) {
   y_range <- qnp_graph_axis_range(input$qplot_y_range)
   point_size  <- if (is.null(input$qplot_point_size))  qnp_graph_point_size  else input$qplot_point_size
   point_alpha <- if (is.null(input$qplot_point_alpha)) qnp_graph_point_alpha else input$qplot_point_alpha
+  log2_y <- isTRUE(input$qplot_log2_y)
   
   if (x_field %in% qnp_graph_categorical_fields) {
-    build_qnp_grouped_boxplot(long_data, x_field, qnp_graph_x_label(x_field), facet = facet, y_range = y_range, point_size = point_size, point_alpha = point_alpha)
+    build_qnp_grouped_boxplot(long_data, x_field, qnp_graph_x_label(x_field), facet = facet, y_range = y_range, point_size = point_size, point_alpha = point_alpha, log2_y = log2_y)
   } else {
     x_is_cps <- identical(x_field, qnp_graph_cps_field)
     x_label <- if (x_is_cps) "CPS" else qnp_label(x_field)
     x_range <- qnp_graph_axis_range(input$qplot_x_range, is_histoslider = TRUE)
-    build_qnp_multi_scatter(long_data, x_field, x_label, x_is_cps = x_is_cps, facet = facet, x_range = x_range, y_range = y_range, point_size = point_size, point_alpha = point_alpha)
+    build_qnp_multi_scatter(long_data, x_field, x_label, x_is_cps = x_is_cps, facet = facet, x_range = x_range, y_range = y_range, point_size = point_size, point_alpha = point_alpha, log2_y = log2_y)
   }
 }
