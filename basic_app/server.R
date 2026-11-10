@@ -703,24 +703,28 @@ function(input, output, session) {
   # fixes a real plotly limitation: ggplotly() doesn't translate a
   # dodged geom_boxplot's own position correctly on its own, so without
   # this every measure's boxes stack on top of each other even though
-  # their jittered points DO dodge correctly. The legend's own y position
-  # is computed from the plot's actual height, not a fixed value (see
-  # legend_y below) — plotly's native layout, not just the ggplot2
-  # theme's legend.box.spacing, since ggplotly() doesn't always preserve
-  # that theme spacing faithfully. Fonts are set the same way, for the
-  # same reason: ggplotly() doesn't reliably carry over the ggplot2
-  # theme's axis.text/axis.title font family, so plotly's own layout
-  # fonts are set explicitly instead — this is also what makes an
-  # exported PNG (plotly's own toolbar, not a separate download button)
-  # match the on-screen fonts, since both are rendered by the browser
-  # from these same layout settings, not by R's graphics device. The
-  # browser resolves "AllenTextLight"/"AllenHeadlineBold" via the same
-  # @font-face rules ui.r's CSS already declares for the rest of the app.
-  # config()'s toImageButtonOptions raises that export's own resolution
-  # (2x scale over a 1600x1000 base) above plotly's own, fairly low-res
-  # default. (The "Ignoring unknown aesthetics: text/key" warning from
-  # plotly's own text/key aesthetics is suppressed where the plot is
-  # actually built — build_qnp_grouped_boxplot()/build_qnp_multi_scatter(),
+  # their jittered points DO dodge correctly. The legend's own y
+  # position is NOT set manually here — two attempts at computing one
+  # (a plain negative fraction, then a height-divided pixel gap) both
+  # still overlapped the axis, which points to the height-based math
+  # itself being unreliable once facet_wrap() creates multiple subplots,
+  # not just the specific number chosen. Instead, a large fixed bottom
+  # margin is reserved, and ggplotly()'s own default bottom-legend
+  # placement (from the ggplot2 theme's legend.position="bottom",
+  # qnp_graph_legend_theme() in functions.r) is left to position itself
+  # within that guaranteed space. Fonts are set here since ggplotly()
+  # doesn't reliably carry over the ggplot2 theme's axis.text/axis.title
+  # font family — this is also what makes an exported PNG (plotly's own
+  # toolbar, not a separate download button) match the on-screen fonts,
+  # since both are rendered by the browser from these same layout
+  # settings, not by R's graphics device. The browser resolves
+  # "AllenTextLight"/"AllenHeadlineBold" via the same @font-face rules
+  # ui.r's CSS already declares for the rest of the app. config()'s
+  # toImageButtonOptions raises that export's own resolution (2x scale
+  # over a 1600x1000 base) above plotly's own, fairly low-res default.
+  # (The "Ignoring unknown aesthetics: text/key" warning from plotly's
+  # own text/key aesthetics is suppressed where the plot is actually
+  # built — build_qnp_grouped_boxplot()/build_qnp_multi_scatter(),
   # functions.r — not here, since it fires at construction time, before
   # this block ever sees the plot.)
   output$qplot_output <- plotly::renderPlotly({
@@ -731,20 +735,11 @@ function(input, output, session) {
     shiny::validate(shiny::need(!is.null(p), "Select the required fields above to see a plot."))
     pl <- plotly::ggplotly(p, tooltip = "text", source = "qplot_output")
     pl <- plotly::event_register(pl, "plotly_click")
-    # plotly's legend y is a FRACTION of the plot's own total height, so a
-    # fixed value reads as a much bigger absolute gap once faceting makes
-    # the plot taller (qplot_plot_height(), dynamic) — a constant pixel
-    # gap divided by that height keeps the actual on-screen gap the same
-    # regardless of how many facet rows there are. The gap itself has to
-    # clear the axis tick labels AND the axis title (both already sit
-    # just below y=0, the bottom of the plot area) before the legend
-    # starts — too small a gap here sat the legend right on top of them
-    # instead of below them.
-    legend_y <- -55 / qplot_plot_height()
     pl <- plotly::layout(
       pl,
       boxmode = "group",
-      legend = list(y = legend_y, yanchor = "top", font = list(family = qnp_graph_axis_font)),
+      margin = list(b = 110),
+      legend = list(font = list(family = qnp_graph_axis_font)),
       font   = list(family = qnp_graph_axis_font),
       xaxis  = list(tickfont = list(family = qnp_graph_axis_font), title = list(font = list(family = qnp_graph_title_font))),
       yaxis  = list(tickfont = list(family = qnp_graph_axis_font), title = list(font = list(family = qnp_graph_title_font)))

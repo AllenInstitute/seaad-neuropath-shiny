@@ -2055,13 +2055,13 @@ qnp_graph_facet_theme <- function() {
   )
 }
 
-# bottom-placed legend shared by both plot builders, close to the axis
-# beneath it.
+# bottom-placed legend shared by both plot builders. Actual spacing
+# below the axis comes from server.r's plotly layout (an explicit
+# reserved margin, not a manually computed y-coordinate — see the
+# renderPlotly block there for why), since this theme setting alone is
+# what the ggsave() download path relies on.
 qnp_graph_legend_theme <- function() {
-  ggplot2::theme(
-    legend.position    = "bottom",
-    legend.box.spacing = ggplot2::unit(2, "pt")
-  )
+  ggplot2::theme(legend.position = "bottom")
 }
 
 # with_placeholder(), generalized for a GROUPED choices list (a named list
