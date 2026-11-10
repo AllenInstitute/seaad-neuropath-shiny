@@ -1830,7 +1830,7 @@ qnp_percent_fields_for_stain <- function(stain) {
 # donor) when more than one, e.g. MEC-HIP covering both MEC and HIP.
 # NULL when there's a crosswalk gap, too little data to plot, or the
 # donor themselves has no value for this field.
-build_stain_comparison_density <- function(donor_id, region, field) {
+build_stain_comparison_density <- function(donor_id, region, field, show_legend = TRUE) {
   qnp_regions <- qnp_region_crosswalk[[region]]
   if (is.null(qnp_regions)) return(NULL)
   
@@ -1847,7 +1847,7 @@ build_stain_comparison_density <- function(donor_id, region, field) {
     ggplot2::scale_linetype_manual(name = NULL, values = c("selected donor" = "dashed")) +
     ggplot2::labs(title = field$label, x = NULL, y = NULL) +
     ggplot2::theme_classic(base_size = 12) +
-    ggplot2::theme(legend.position = "bottom") +
+    ggplot2::theme(legend.position = if (show_legend) "bottom" else "none") +
     qnp_graph_font_theme()
 }
 
@@ -1885,13 +1885,14 @@ build_stain_comparison_ui <- function(id_prefix, donor_id, region, stain) {
 register_comparison_density_plots <- function(output, id_prefix, entries) {
   for (e in entries) {
     fields <- qnp_percent_fields_for_stain(e$stain)
-    for (f in fields) {
+    for (i in seq_along(fields)) {
       local({
         donor_id <- e$donor
         region <- e$region
-        fld <- f
-        output[[comparison_density_output_id(id_prefix, e$donor, e$region, e$stain, f$id)]] <- shiny::renderPlot({
-          p <- build_stain_comparison_density(donor_id, region, fld)
+        fld <- fields[[i]]
+        show_legend <- i == length(fields)  # one accordion, one meaning — only the last plot needs it
+        output[[comparison_density_output_id(id_prefix, e$donor, e$region, e$stain, fld$id)]] <- shiny::renderPlot({
+          p <- build_stain_comparison_density(donor_id, region, fld, show_legend = show_legend)
           shiny::validate(shiny::need(!is.null(p), "No comparison data available."))
           p
         })
