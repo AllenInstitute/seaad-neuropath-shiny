@@ -657,9 +657,9 @@ qnp_field_display_label <- function(label) {
   sub("\\bpercent\\b", "%", label)
 }
 
-# TRUE when a region has more than one subregion — the only case where a
-# "Global (average)" choice is meaningful. With a single subregion the
-# average would just BE that subregion's value.
+# TRUE when a region has more than one subregion — used for CSV column
+# naming (build_qnp_wide_columns()): with just one subregion its name
+# doesn't need repeating in every column header.
 qnp_region_has_multiple_subregions <- function(region) {
   subs <- qnp_by_region[[region]]
   !is.null(subs) && length(subs) > 1
@@ -678,44 +678,52 @@ qnp_grouping_has_multiple_regions <- function(grouping) {
   length(get_qnp_regions_in_grouping(grouping)) > 1
 }
 
-# which subregion key to use when we want "the region as a whole": the
-# Global average when there are several subregions, otherwise the single
-# subregion's own values (an average of one thing is that thing).
-# Builders, filters and reset ALL call this, so their widget ids can never
-# drift apart — that drift was a real, separately-diagnosed bug.
+# the real subregion name containing "grey matter" (any case) within a
+# region, if it has one — a genuine anatomical whole-region measurement
+# (grey matter as a whole, as opposed to individual cortical layers
+# within it), used as "the region as a whole" instead of an artificial
+# average across subregions. NULL if none of this region's subregions
+# match.
+qnp_grey_matter_subregion <- function(region) {
+  subregions <- names(qnp_by_region[[region]])
+  match <- subregions[grepl("grey matter", subregions, ignore.case = TRUE)]
+  if (length(match) == 0) return(NULL)
+  match[1]
+}
+
+# which subregion key to use when we want "the region as a whole": its
+# grey matter subregion if it has one, the single subregion's own values
+# if there's only one, or (several subregions, none grey matter) the
+# first one alphabetically as a deterministic fallback. Builders, filters
+# and reset ALL call this, so their widget ids can never drift apart —
+# that drift was a real, separately-diagnosed bug.
 qnp_region_level_key <- function(region) {
-  if (qnp_region_has_multiple_subregions(region)) qnp_global_sentinel else names(qnp_by_region[[region]])[[1]]
+  grey_matter <- qnp_grey_matter_subregion(region)
+  if (!is.null(grey_matter)) return(grey_matter)
+  subregions <- names(qnp_by_region[[region]])
+  if (length(subregions) <= 1) return(subregions[1])
+  sort(subregions)[1]
 }
 
 # returns a data.frame(donor, value) for one field at one region +
-# (subregion or "Global"). "Global" is a genuine per-donor MEAN across
-# every subregion they have in that region — never a pooling of raw rows,
-# which would double-count a donor once per subregion.
+# subregion — always that subregion's own real rows, never an average
+# across subregions (which would double-count a donor once per
+# subregion, and conflate anatomically distinct layers into one number).
 identify_qnp_field_values <- function(region, subregion_choice, field_id) {
   subregion_subsets <- qnp_by_region[[region]]
   if (is.null(subregion_subsets)) return(data.frame(donor = character(0), value = numeric(0)))
   
-  if (identical(subregion_choice, qnp_global_sentinel)) {
-    combined <- do.call(rbind, subregion_subsets)
-    agg <- stats::aggregate(
-      combined[[field_id]], by = list(donor = combined$donor),
-      FUN = function(x) { m <- mean(x, na.rm = TRUE); if (is.nan(m)) NA_real_ else m }
-    )
-    names(agg) <- c("donor", "value")
-    agg
-  } else {
-    subset <- subregion_subsets[[subregion_choice]]
-    if (is.null(subset)) return(data.frame(donor = character(0), value = numeric(0)))
-    data.frame(donor = subset$donor, value = subset[[field_id]])
-  }
+  subset <- subregion_subsets[[subregion_choice]]
+  if (is.null(subset)) return(data.frame(donor = character(0), value = numeric(0)))
+  data.frame(donor = subset$donor, value = subset[[field_id]])
 }
 
-# a widget id unique to (region, subregion-or-"Global", field).
+# a widget id unique to (region, subregion, field).
 identify_donor_qnp_widget_id <- function(region, subregion_choice, field_id) {
   paste0("iddonors_qnpr_", gsub("[^A-Za-z0-9]+", "_", paste(region, subregion_choice, field_id, sep = "_")))
 }
 
-# one field's label + histoslider, for one region+subregion-or-Global view.
+# one field's label + histoslider, for one region+subregion view.
 build_qnp_field_slider <- function(f, region, subregion_choice) {
   vals_df <- identify_qnp_field_values(region, subregion_choice, f$id)
   vals <- stats::na.omit(vals_df$value)
@@ -761,7 +769,7 @@ qnp_cards_in_columns <- function(cards, min_col_width = "320px") {
   )
 }
 
-# Region mode: one card per stain, at the chosen region + subregion/Global.
+# Region mode: one card per stain, at the chosen region + subregion.
 build_iddonors_qnp_region_sliders <- function(region, subregion_choice) {
   cards <- Filter(Negate(is.null), lapply(get_qnp_stain_groups(), function(stain) {
     fields <- Filter(function(f) identical(f$stain_group, stain), qnp_fields)
@@ -784,7 +792,7 @@ build_iddonors_qnp_stain_sliders <- function(stain) {
 }
 
 # region mode's controls: a region selector, then (dependent on it) a
-# subregion-or-Global selector.
+# subregion selector.
 build_iddonors_qnp_region_controls <- function() {
   shiny::tagList(
     shiny::selectInput("iddonors_qnp_grouping_sel", "Region group", choices = with_placeholder(get_qnp_groupings())),
@@ -898,9 +906,9 @@ build_identify_donors_metadata_accordion <- function() {
 
 # the QNP accordion: one panel whose body is the mode radio + dynamic
 # controls + the multi-column sliders. Always the filtering/slider view —
-# global-vs-specific-subregion is chosen later, via the subregion
-# selector's own "Global (average)" option (see
-# register_identify_donors_qnp()'s iddonors_qnp_subregion_ui below).
+# which subregion (grey matter or otherwise) is chosen later, via the
+# subregion selector itself (see register_identify_donors_qnp()'s
+# iddonors_qnp_subregion_ui below).
 build_identify_donors_qnp_accordion <- function() {
   body <- if (length(qnp_by_region) == 0) {
     shiny::helpText("No QNP data loaded yet.")
@@ -943,12 +951,17 @@ register_identify_donors_qnp <- function(output, input) {
     shiny::req(is_selected(input$iddonors_qnp_region_sel))
     region <- input$iddonors_qnp_region_sel
     subregions <- sort(names(qnp_by_region[[region]]))
-    # "Global (average)" only offered with >1 subregion — with just one,
-    # the average IS that subregion's value, so it'd be a duplicate choice.
-    choices <- if (qnp_region_has_multiple_subregions(region)) {
-      c("Global (average)" = qnp_global_sentinel, subregions)
+    # grey matter (if this region has one) sorts first, relabeled
+    # "Global (<name>)" for display — its own real subregion data, not
+    # an average, but still the natural "whole region" default to draw
+    # attention to. No special entry at all when there's no grey matter
+    # subregion to point to.
+    grey_matter <- qnp_grey_matter_subregion(region)
+    if (!is.null(grey_matter)) {
+      others <- setdiff(subregions, grey_matter)
+      choices <- stats::setNames(c(grey_matter, others), c(sprintf("Global (%s)", smart_lowercase(grey_matter)), others))
     } else {
-      subregions
+      choices <- subregions
     }
     shiny::selectInput("iddonors_qnp_subregion_sel", "Subregion", choices = choices)
   })
@@ -1172,11 +1185,6 @@ render_donor_all_metadata <- function(donor_id) {
         # no data shows until the user actually picks one.
         shiny::radioButtons("iddonors_popup_region_sel", NULL, choices = region_choices, selected = character(0), inline = FALSE),
         shiny::selectInput("iddonors_popup_stain_sel", "Stain", choices = with_placeholder(get_qnp_stain_groups(qnp_fields_all))),
-        shiny::radioButtons(
-          "iddonors_popup_qnp_view_mode", "Show QNP as:",
-          choices = c("Global average (% only)" = "global", "All values by layer" = "layers"),
-          selected = "layers", inline = TRUE
-        ),
         shiny::uiOutput("iddonors_popup_qnp_ui")
       )
     )
@@ -1185,15 +1193,15 @@ render_donor_all_metadata <- function(donor_id) {
   shiny::tagList(group_cards, qnp_section)
 }
 
-# one region's QNP detail for the popup.
-# view_mode "layers": every subregion (layer) as its own card, every
-#   measure (qnp_fields_all).
-# view_mode "global": ONE card — every percent-type field (qnp_fields,
-#   already percent-only), averaged across this donor's subregions in
-#   this region.
-# stain, if given, narrows either field list down to just that one
+# one region's QNP detail for the popup — every subregion (layer) as its
+# own card, every measure (qnp_fields_all). Grey matter (if this donor
+# has a matching subregion row here) sorts first, relabeled "Global
+# (<name>)" — its own real data, not an average across subregions, but
+# still the natural "whole region" card to draw attention to; same
+# convention the Filter Donors sidebar's own subregion picker uses.
+# stain, if given, narrows the field list down to just that one
 # stain_group — NULL (the default) shows every stain's fields.
-render_donor_qnp_region_detail <- function(donor_id, region, view_mode = "layers", stain = NULL) {
+render_donor_qnp_region_detail <- function(donor_id, region, stain = NULL) {
   rows <- qnp_metadata[qnp_metadata$donor == donor_id & qnp_metadata$region == region, , drop = FALSE]
   if (nrow(rows) == 0) return(shiny::p("No QNP data on record for this donor in this region."))
   
@@ -1208,19 +1216,15 @@ render_donor_qnp_region_detail <- function(donor_id, region, view_mode = "layers
     Filter(function(f) identical(f$stain_group, stain), fields)
   }
   
-  if (identical(view_mode, "global")) {
-    fields <- narrow_to_stain(qnp_fields)
-    vals <- Filter(Negate(is.null), lapply(fields, function(f) {
-      v <- mean(rows[[f$id]], na.rm = TRUE)
-      if (is.na(v)) return(NULL)
-      shiny::tags$div(style = line_style, shiny::tags$strong(paste0(qnp_field_display_label(f$label), ": ")), shiny::tags$span(signif(v, 4)))
-    }))
-    if (length(vals) == 0) return(shiny::p("No percent-field data for this donor/region/stain."))
-    return(bslib::card(bslib::card_body(vals, gap = "0px")))
+  grey_matter_idx <- which(grepl("grey matter", rows$subregion, ignore.case = TRUE))
+  row_order <- if (length(grey_matter_idx) > 0) {
+    c(grey_matter_idx[1], setdiff(seq_len(nrow(rows)), grey_matter_idx[1]))
+  } else {
+    seq_len(nrow(rows))
   }
   
   fields <- narrow_to_stain(qnp_fields_all)
-  cards <- Filter(Negate(is.null), lapply(seq_len(nrow(rows)), function(i) {
+  cards <- Filter(Negate(is.null), lapply(row_order, function(i) {
     r <- rows[i, , drop = FALSE]
     vals <- Filter(Negate(is.null), lapply(fields, function(f) {
       v <- r[[f$id]]
@@ -1228,9 +1232,11 @@ render_donor_qnp_region_detail <- function(donor_id, region, view_mode = "layers
       shiny::tags$div(style = line_style, shiny::tags$strong(paste0(f$label, ": ")), shiny::tags$span(signif(v, 4)))
     }))
     if (length(vals) == 0) return(NULL)
+    is_grey_matter <- length(grey_matter_idx) > 0 && i == grey_matter_idx[1]
+    header <- if (is_grey_matter) sprintf("Global (%s)", smart_lowercase(r$subregion)) else r$subregion
     bslib::card(
       style = "margin-bottom:8px;",
-      bslib::card_header(r$subregion),
+      bslib::card_header(header),
       bslib::card_body(vals, gap = "0px")
     )
   }))
@@ -1798,8 +1804,8 @@ render_donor_metadata_qnp_block <- function(donor_id, image_region, image_stain 
 # "Comparison to other donors" accordion — for one image tile (Home,
 # Compare Stains, or Compare Regions), a density plot per percent-type
 # QNP measure relevant to that tile's own stain, showing every donor's
-# Global (region-level) value with a dashed "selected donor" line marking
-# where the currently-viewed donor falls. Collapsed by default; expandable
+# region-level value with a dashed "selected donor" line marking where
+# the currently-viewed donor falls. Collapsed by default; expandable
 # per tile. id_prefix keeps output ids unique across pages, the same
 # reason render_annotation_master_ui()'s id_prefix exists — all three
 # pages' tiles can coexist in the DOM (navbarPage renders every tab up
@@ -1815,7 +1821,7 @@ qnp_percent_fields_for_stain <- function(stain) {
   Filter(function(f) f$stain_group %in% stain_groups, qnp_fields)
 }
 
-# density plot of one field's Global value across every donor, with a
+# density plot of one field's region-level value across every donor, with a
 # dashed line (labeled "selected donor" via the legend, rather than an
 # annotation that would need repositioning per plot's own data range) at
 # the given donor's own value. region is the manifest's own naming,
@@ -1898,9 +1904,9 @@ register_comparison_density_plots <- function(output, id_prefix, entries) {
 # QNP Graphs page — ggplot2 boxplots/scatterplots of donor_metadata's
 # demographic/clinical fields against qnp_metadata's measures. Every QNP
 # value plotted is a per-donor REGION-LEVEL value (identify_qnp_field_values()
-# + qnp_region_level_key(), same "Global (average) across subregions, or the
-# lone subregion's own value" logic Filter Donors already uses) — never a
-# raw per-subregion row, which would double-count a donor once per layer.
+# + qnp_region_level_key(), same "grey matter if this region has one, else
+# the lone subregion" logic Filter Donors already uses) — never a raw
+# per-subregion row, which would double-count a donor once per layer.
 #
 # One X axis (a category, CPS, or a QNP measure) and up to
 # qnp_graph_color_cap Y-axis QNP measures, reshaped to long format so every

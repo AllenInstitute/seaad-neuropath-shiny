@@ -539,18 +539,17 @@ function(input, output, session) {
     ))
   })
   
-  # the region-dependent half of the popup — rebuilt whenever the region,
-  # stain, or view-mode control inside the (currently open) modal changes.
-  # nothing displays until both region and stain are explicitly picked —
-  # neither one defaults to a value, so there's no "default view".
+  # the region-dependent half of the popup — rebuilt whenever the region
+  # or stain control inside the (currently open) modal changes. nothing
+  # displays until both are explicitly picked — neither one defaults to
+  # a value, so there's no "default view".
   output$iddonors_popup_qnp_ui <- renderUI({
     donor_id <- iddonors_popup_donor()
     req(is_selected(donor_id))
     if (!is_selected(input$iddonors_popup_region_sel) || !is_selected(input$iddonors_popup_stain_sel)) {
       return(shiny::helpText("Select a region and stain above to see QNP data."))
     }
-    view_mode <- input$iddonors_popup_qnp_view_mode %||% "layers"
-    render_donor_qnp_region_detail(donor_id, input$iddonors_popup_region_sel, view_mode, stain = input$iddonors_popup_stain_sel)
+    render_donor_qnp_region_detail(donor_id, input$iddonors_popup_region_sel, stain = input$iddonors_popup_stain_sel)
   })
   
   # kept only as a hidden text source for the page's Copy button.

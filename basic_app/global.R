@@ -317,10 +317,6 @@ donor_compare_cap <- 10
 donor_compare_min <- 2
 tt_donor_compare_cap <- sprintf("Number of donors that can be selected is capped at %d.", donor_compare_cap)
 
-# sentinel meaning "averaged across every subregion in this region", used
-# throughout the QNP filtering/display code instead of a repeated literal.
-qnp_global_sentinel <- "Global"
-
 # Filter Donors tab's exact title — compared against input$main_nav in
 # server.r, and used by ui.r's tabPanel() itself, so the two can't drift.
 filter_donors_tab_name <- "filter donors"
