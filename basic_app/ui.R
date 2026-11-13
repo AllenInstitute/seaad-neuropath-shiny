@@ -7,11 +7,8 @@ tagList(
   useShinyjs(),
   
   tags$head(
-    includeHTML("R/google-analytics.html")
-  ),
-  
-  tags$head(
     # favicon_path (global.r) — add that file to www/.
+    includeHTML("R/google-analytics.html"),
     tags$link(rel = "icon", type = "image/png", href = favicon_path),
     tags$style(HTML(sprintf("
       @font-face {
